@@ -1,37 +1,39 @@
-name: Build and Deploy Jekyll Site
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+ name: Build and Deploy Jekyll Site
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write  # This is the crucial line
+ on:
+   push:
+     branches: [ main ]
+   pull_request:
+     branches: [ main ]
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
+ permissions:
+   contents: read
+   pages: write
+   id-token: write
 
-    - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: '3.4.2'  # Replace with your *actual* local version
-        bundler-cache: true
+ jobs:
+   build:
+     runs-on: ubuntu-latest
+     steps:
+     - uses: actions/checkout@v4
 
-    - name: Build site
-      run: bundle exec jekyll build
+     - name: Set up Ruby
+       uses: ruby/setup-ruby@v1
+       with:
+         ruby-version: file  # Use .ruby-version
+         bundler-cache: true
 
-      name: Upload artifact  # THIS IS THE NEW, CRUCIAL STEP
-      uses: actions/upload-artifact@v4
-      with:
-        name: github-pages  # The artifact MUST be named "github-pages"
-        path: ./_site      # Upload the contents of the _site directory
+     - name: Build site
+       run: bundle exec jekyll build
 
-    - name: Deploy to GitHub Pages
-      if: github.ref == 'refs/heads/main'
-      uses: actions/deploy-pages@v4
+     - name: Upload artifact
+       uses: actions/upload-artifact@v4
+       with:
+         name: github-pages
+         path: ./_site
+
+     - name: Deploy to GitHub Pages
+       if: github.ref == 'refs/heads/main'
+       uses: actions/deploy-pages@v4
+  
