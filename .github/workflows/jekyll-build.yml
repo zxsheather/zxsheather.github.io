@@ -1,38 +1,43 @@
+name: Build and Deploy Jekyll Site
 
- name: Build and Deploy Jekyll Site
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
- on:
-   push:
-     branches: [ main ]
-   pull_request:
-     branches: [ main ]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
- permissions:
-   contents: read
-   pages: write
-   id-token: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4.2
+          bundler-cache: true
+      - name: Build site
+        run: bundle exec jekyll build
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-pages
+          path: ./_site
 
- jobs:
-   build:
-     runs-on: ubuntu-latest
-     steps:
-     - uses: actions/checkout@v4
-
-     - name: Set up Ruby
-       uses: ruby/setup-ruby@v1
-       with:
-         ruby-version: 3.4.2  # Use .ruby-version
-         bundler-cache: true
-
-     - name: Build site
-       run: bundle exec jekyll build
-
-     - name: Upload artifact
-       uses: actions/upload-artifact@v4
-       with:
-         name: github-pages
-         path: ./_site
-
-     - name: Deploy to GitHub Pages
-       if: github.ref == 'refs/heads/main'
-       uses: actions/deploy-pages@v4
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # 添加环境配置
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
