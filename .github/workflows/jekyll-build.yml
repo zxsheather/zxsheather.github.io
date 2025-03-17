@@ -10,26 +10,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    
+    - uses: actions/checkout@v4
+
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
-        ruby-version: '3.4.2'
+        ruby-version: '3.3.0'  # Replace with your *actual* local version
         bundler-cache: true
-    
-    - name: Install dependencies
-      run: |
-        gem install bundler
-        bundle install
-    
+
     - name: Build site
       run: bundle exec jekyll build
-    
-    - name: Deploy
-      uses: peaceiris/actions-gh-pages@v3
+
+    - name: Deploy to GitHub Pages
       if: github.ref == 'refs/heads/main'
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./_site
-        publish_branch: gh-pages
+      uses: actions/deploy-pages@v4
