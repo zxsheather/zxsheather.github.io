@@ -21,7 +21,7 @@
      - name: Set up Ruby
        uses: ruby/setup-ruby@v1
        with:
-         ruby-version: file  # Use .ruby-version
+         ruby-version: 3.4.2  # Use .ruby-version
          bundler-cache: true
 
      - name: Build site
@@ -36,4 +36,3 @@
      - name: Deploy to GitHub Pages
        if: github.ref == 'refs/heads/main'
        uses: actions/deploy-pages@v4
-  
