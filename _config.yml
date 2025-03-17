@@ -1,0 +1,31 @@
+title: Zxsheather
+email: zxsheather@sjtu.edu.cn
+github: https://github.com/zxsheather
+logo: /assets/img/2.png
+description: >-
+  A CS Undergraduate
+baseurl: "" # 如果您的网站托管在子路径下，请修改此处
+url: "https://zxsheather.github.io"
+
+# 构建设置
+markdown: kramdown
+theme: jekyll-theme-hydejack
+
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+
+
+# 字体设置
+font_heading: "'苹方', 'PingFang SC', '-apple-system', 'Helvetica Neue', sans-serif"
+font:         "'苹方', 'PingFang SC', '-apple-system', 'Helvetica Neue', sans-serif"
+font_code:    " Monaco, Consolas, monospace "
+# 排除文件
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+
+
+
