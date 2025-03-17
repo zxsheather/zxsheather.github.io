@@ -23,6 +23,15 @@ jobs:
           bundler-cache: true
       - name: Build site
         run: bundle exec jekyll build
+      # 添加这个新步骤来处理符号链接
+      - name: Remove symlinks
+        run: |
+          find _site -type l -delete
+          # 或者使用以下命令将符号链接替换为实际文件
+          # find _site -type l -exec cp --remove-destination "$(readlink {})" "{}" \;
+      - name: Check for large files
+        run: |
+          find _site -type f -size +50M -exec ls -lh {} \;
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

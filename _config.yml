@@ -26,6 +26,7 @@ exclude:
   - Gemfile.lock
   - node_modules
   - vendor
+  - bower_components
 
 
 
