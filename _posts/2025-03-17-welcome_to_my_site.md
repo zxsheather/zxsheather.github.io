@@ -6,9 +6,9 @@ categories: [Blogs, Introduction]
 tags: [myself]
 ---
 
-Writing is a solitary art.\\
-I write to make time pass more meaningfully.
-{:.note .lead}
+Writing is a solitary art.&emsp;&emsp; ——Susan Sontag\\
+I write to make time pass more meaningfully.&emsp;&emsp; ——Jorge Luis Borges
+{:.faded .lead}
 
 ## 个人的时光之河
 ### &emsp;&emsp;——Why I create this site?
