@@ -126,7 +126,7 @@ DEPENDENCIES
   jekyll (~> 4.4.1)
   jekyll-feed (~> 0.12)
   jekyll-seo-tag (~> 2.8)
-  jekyll-theme-hydejack
+  jekyll-theme-hydejack (~> 9.2.1)
   webrick (~> 1.7)
 
 BUNDLED WITH
