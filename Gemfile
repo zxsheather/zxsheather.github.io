@@ -11,4 +11,4 @@ group :jekyll_plugins do
   gem "jekyll-seo-tag", "~> 2.8"
 end 
 
-gem "jekyll-theme-hydejack", "~> 9.2.1"
+gem "jekyll-theme-hydejack"
