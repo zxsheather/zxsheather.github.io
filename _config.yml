@@ -20,6 +20,7 @@ plugins:
 font_heading: "'苹方', 'PingFang SC', '-apple-system', 'Helvetica Neue', sans-serif"
 font:         "'苹方', 'PingFang SC', '-apple-system', 'Helvetica Neue', sans-serif"
 font_code:    " Monaco, Consolas, monospace "
+
 # 排除文件
 exclude:
   - Gemfile

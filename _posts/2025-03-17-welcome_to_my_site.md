@@ -2,8 +2,9 @@
 layout: post
 title: "欢迎来到我的网站"
 date: 2025-03-17
-categories: [Blogs, Introduction]
+categories: [introduction]
 tags: [myself]
+featured: true
 ---
 
 Writing is a solitary art.&emsp;&emsp; ——Susan Sontag\\

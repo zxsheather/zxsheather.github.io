@@ -1,258 +1,274 @@
-<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en"><generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator><link href="http://localhost:4000/feed.xml" rel="self" type="application/atom+xml" /><link href="http://localhost:4000/" rel="alternate" type="text/html" hreflang="en" /><updated>2025-05-10T21:36:23+08:00</updated><id>http://localhost:4000/feed.xml</id><title type="html">Zxsheather</title><subtitle>A CS Undergraduate</subtitle><entry><title type="html">Git底层原理详解</title><link href="http://localhost:4000/2025/05/09/git-underlying-principles.html" rel="alternate" type="text/html" title="Git底层原理详解" /><published>2025-05-09T00:00:00+08:00</published><updated>2025-05-09T00:00:00+08:00</updated><id>http://localhost:4000/2025/05/09/git-underlying-principles</id><content type="html" xml:base="http://localhost:4000/2025/05/09/git-underlying-principles.html"><![CDATA[<h1 id="一-前言">一. 前言</h1>
-<p>在一开始接触Git与Github时，我对Git的一些操作十分疑惑。作为一名学生，我常用的操作无非以下几种：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 创建仓库</span>
-git init  
-<span class="c"># 克隆仓库</span>
-git clone <span class="o">[</span>repository url]
-<span class="c"># 将修改内容保存到暂存区</span>
-git add <span class="o">[</span>file path]
-<span class="c"># 提交到本地仓库</span>
-git commit <span class="nt">-m</span> <span class="s2">"commit message"</span>
-<span class="c"># 推送到远端仓库</span>
-git push <span class="o">[</span>remote branch name] <span class="o">[</span><span class="nb">local </span>branch name] 
-</code></pre></div></div>
-<p>在创建仓库阶段，<code class="language-plaintext highlighter-rouge">git init</code>会创建一个<code class="language-plaintext highlighter-rouge">.git</code>文件夹。那我就很疑惑了，<code class="language-plaintext highlighter-rouge">.git</code>文件夹是用来干什么的？里面保存了些什么？这值得我们探究<br />
-在提交修改阶段，新手的我只会照葫芦画瓢，用最简单的方法：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 将所有修改内容写入暂存区</span>
-git add <span class="nb">.</span>
-<span class="c"># 提交到本地仓库</span>
-git commit <span class="nt">-m</span> <span class="s2">"commit message"</span>
-<span class="c"># 推送到远端仓库</span>
-git push origin main
-</code></pre></div></div>
-<p>It looks like magic! 在终端上打上几行，到Github上看,wow,真的把修改保存并推送上去了。🙌😭🙌 Amazing! <br />
-对于一般人来讲，了解这些也许就够用。但我想，这对学计算机的人来说远远不够。毕竟，“计算机中没有魔法”。所以，就让我们详细探究一下<code class="language-plaintext highlighter-rouge">git</code>的底层原理，理解这个堪称伟大的版本控制系统。</p>
-<h1 id="二-初探">二. 初探</h1>
-<p>让我们先来看看这个神秘的<code class="language-plaintext highlighter-rouge">.git</code>文件夹中保存着什么：</p>
-<h2 id="1-准备">1. 准备</h2>
-<p>首先，我们先新建一个<code class="language-plaintext highlighter-rouge">git</code>仓库,并切换到该文件夹</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>// Terminal 1
-╭─ ~ ────────────────────────────────────────────────────────────── 10:37:50 ─╮
-╰─❯ git init git-demo                                                        ─╯
-已初始化空的 Git 仓库于 /Users/apple/git-demo/.git/
+<!DOCTYPE html>
+<html lang="en"><!--
+ __  __                __                                     __
+/\ \/\ \              /\ \             __                    /\ \
+\ \ \_\ \   __  __    \_\ \      __   /\_\      __       ___ \ \ \/'\
+ \ \  _  \ /\ \/\ \   /'_` \   /'__`\ \/\ \   /'__`\    /'___\\ \ , <
+  \ \ \ \ \\ \ \_\ \ /\ \L\ \ /\  __/  \ \ \ /\ \L\.\_ /\ \__/ \ \ \\`\
+   \ \_\ \_\\/`____ \\ \___,_\\ \____\ _\ \ \\ \__/.\_\\ \____\ \ \_\ \_\
+    \/_/\/_/ `/___/> \\/__,_ / \/____//\ \_\ \\/__/\/_/ \/____/  \/_/\/_/
+                /\___/                \ \____/
+                \/__/                  \/___/
 
-╭─ ~ ────────────────────────────────────────────────────────────── 17:02:24 ─╮
-╰─❯ <span class="nb">cd </span>git-demo
-</code></pre></div></div>
-<p>此时里面并没有任何东西，除了一个隐藏文件夹<code class="language-plaintext highlighter-rouge">git</code>(对于Mac系统来说)。我们可以用<code class="language-plaintext highlighter-rouge">git status</code>命令来查看当前git文件夹的状态</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>// Terminal 1
-╭─ ~/git-demo main ──────────────────────────────────────────────── 17:03:46 ─╮
-╰─❯ <span class="nb">ls</span>                                                                       ─╯
+Powered by Hydejack v9.2.1 <https://hydejack.com/>
+-->
 
-╭─ ~/git-demo main ──────────────────────────────────────────────── 17:05:01 ─╮
-╰─❯ git status                                                               ─╯
-位于分支 main
 
-尚无提交
 
-无文件要提交（创建/拷贝文件并使用 <span class="s2">"git add"</span> 建立跟踪）
-</code></pre></div></div>
-<p>现在我们开一个新的终端并切换到git-demo目录，通过<code class="language-plaintext highlighter-rouge">watch</code>和<code class="language-plaintext highlighter-rouge">tree</code>工具来查看<code class="language-plaintext highlighter-rouge">.git</code>文件夹下保存了哪些内容。<br />
-我们需要安装<code class="language-plaintext highlighter-rouge">tree</code>和<code class="language-plaintext highlighter-rouge">watch</code>工具，<code class="language-plaintext highlighter-rouge">tree</code>用于用树状结构展现文件夹的内容，<code class="language-plaintext highlighter-rouge">watch</code>用于监视<code class="language-plaintext highlighter-rouge">git</code>内容的变化。</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>brew <span class="nb">install </span>tree
-brew <span class="nb">install </span>watch
-</code></pre></div></div>
-<p>然后，运行</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>// Terminal 2
-<span class="c"># 0.5秒刷新一次</span>
-watch <span class="nt">-n</span> .5 tree .git
-</code></pre></div></div>
-<p>会显示这样的界面</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>// Terminal 2
-Every 0.5s: tree. git                                                                                                                   
-.git
-├── HEAD
-├── config
-├── description
-├── hooks
-│   ├── applypatch-msg.sample
-│   ├── commit-msg.sample
-│   ├── fsmonitor-watchman.sample
-│   ├── post-update.sample
-│   ├── pre-applypatch.sample
-│   ├── pre-commit.sample
-│   ├── pre-merge-commit.sample
-│   ├── pre-push.sample
-│   ├── pre-rebase.sample
-│   ├── pre-receive.sample
-│   ├── prepare-commit-msg.sample
-│   ├── push-to-checkout.sample
-│   ├── sendemail-validate.sample
-│   └── update.sample
-├── info
-│   └── exclude
-├── objects
-│   ├── info
-│   └── pack
-└── refs
-    ├── heads
-    └── tags
 
-9 directories, 18 files
-</code></pre></div></div>
-<p>（该操作后，Terminal 2 用于显示信息，Terminal 1 用于输入操作）
-我们可以看到<code class="language-plaintext highlighter-rouge">.git</code>文件夹下有很多部分组成。目前我们先关注<code class="language-plaintext highlighter-rouge">objects</code>部分。为了方便观察与说明，我们先去掉<code class="language-plaintext highlighter-rouge">hooks</code>：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">rm</span> <span class="nt">-r</span> .git/hooks
-</code></pre></div></div>
-<p>显示为</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>.git
-├── HEAD
-├── config
-├── description
-├── info
-│   └── exclude
-├── objects
-│   ├── info
-│   └── pack
-└── refs
-    ├── heads
-    └── tags
-</code></pre></div></div>
-<h2 id="2-加入文件">2. 加入文件</h2>
-<p>现在我们往仓库中加入文件。</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>╭─ ~/git-demo main ──────────────────────────────────────────────── 22:07:21 ─╮
-╰─❯ vim 1.txt
-</code></pre></div></div>
-<p>并在<code class="language-plaintext highlighter-rouge">1.txt</code>中写入<code class="language-plaintext highlighter-rouge">hello world</code>。我们发现<code class="language-plaintext highlighter-rouge">.git</code>文件夹并没有发生任何的改变。这也是合理的，我们只是在项目中加入了一个文件，还没有执行<code class="language-plaintext highlighter-rouge">git</code>的任何命令。现在，让我们把<code class="language-plaintext highlighter-rouge">1.txt</code>加入暂存区，正如我们经常做的那样：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>╭─ ~/git-demo main ?1 ───────────────────────────────────────── 28s 22:14:54 ─╮
-╰─❯ git add 1.txt                                                            ─╯
-警告：在 <span class="s1">'1.txt'</span> 的工作拷贝中，下次 Git 接触时 LF 将被 CRLF 替换
-</code></pre></div></div>
-<p><code class="language-plaintext highlighter-rouge">.git</code>文件夹变成了这样：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>.git
-├── HEAD
-├── config
-├── description
-├── index
-├── info
-│   └── exclude
-├── objects
-│   ├── 3b
-│   │   └── 18e512dba79e4c8300dd08aeb37f8e728b8dad
-│   ├── info
-│   └── pack
-└── refs
-    ├── heads
-    └── tags
-</code></pre></div></div>
-<p>我们可以看到<code class="language-plaintext highlighter-rouge">.git/objects</code>文件夹下多了一个内容。那这一长串又是什么？这就涉及到<code class="language-plaintext highlighter-rouge">git</code>的底层设计哲学了。<br />
-在文件保存到<code class="language-plaintext highlighter-rouge">.git</code>文件夹中前，<code class="language-plaintext highlighter-rouge">git</code>会对你的文件的所有数据进行哈希处理，生成一个<code class="language-plaintext highlighter-rouge">SHA-1</code>的哈希值，这个哈希值就是你此次提交数据的<strong>唯一标识符</strong>。在我们的例子中，<code class="language-plaintext highlighter-rouge">git</code>根据<code class="language-plaintext highlighter-rouge">1.txt</code>的内容<code class="language-plaintext highlighter-rouge">hello world</code>生成了一个哈希值<code class="language-plaintext highlighter-rouge">2e3c1c7a3faf540c6490fab43ac83bdfa17400eb</code>用于标识该文件。我们还可以通过<code class="language-plaintext highlighter-rouge">git hash-object</code>命令来查看该文件的哈希值：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>╭─ ~/git-demo main +1 ───────────────────────────────────────────── 22:19:58 ─╮
-╰─❯ git hash-object <span class="nt">-w</span> 1.txt                                                 ─╯
-警告：在 <span class="s1">'1.txt'</span> 的工作拷贝中，下次 Git 接触时 LF 将被 CRLF 替换
-3b18e512dba79e4c8300dd08aeb37f8e728b8dad
-</code></pre></div></div>
-<p>可以看到，显示的哈希值与我们在<code class="language-plaintext highlighter-rouge">.git/objects</code>中看到的哈希值是一样的。<br />
-根据内容生成标识符有什么好处呢？首先，也是最重要的一点，它能时刻保证数据的完整性。当文件内容发生任何变化，无论该变化有多微小，哈希值都会发生非常大的改变，也就是说，<code class="language-plaintext highlighter-rouge">git</code>能时刻监控文件的变化。当文件在传输时变得不完整，数据损毁、缺失，<code class="language-plaintext highlighter-rouge">git</code>也能通过哈希值来检测到。其次，相同的文件内容会生成相同的哈希值，这就意味着<code class="language-plaintext highlighter-rouge">git</code>能通过哈希值来判断文件是否重复，也可以节省存储空间。比如我们在<code class="language-plaintext highlighter-rouge">git</code>中加入了一个文件<code class="language-plaintext highlighter-rouge">2.txt</code>，内容与<code class="language-plaintext highlighter-rouge">1.txt</code>完全相同：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>vim 2.txt
-git add 2.txt
-</code></pre></div></div>
-<p>我们发现<code class="language-plaintext highlighter-rouge">git</code>并没有任何变化。说明<code class="language-plaintext highlighter-rouge">git</code>并没有重复存储相同的文件。而当我们加入一个文件<code class="language-plaintext highlighter-rouge">3.txt</code>，内容为<code class="language-plaintext highlighter-rouge">hello world!</code>时，</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>vim 3.txt
-git add 3.txt
-</code></pre></div></div>
-<p>显示为</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>.git
-├── HEAD
-├── config
-├── description
-├── index
-├── info
-│   └── exclude
-├── objects
-│   ├── 3b
-│   │   └── 18e512dba79e4c8300dd08aeb37f8e728b8dad
-│   ├── a0
-│   │   └── 423896973644771497bdc03eb99d5281615b51
-│   ├── info
-│   └── pack
-└── refs
-    ├── heads
-    └── tags
-</code></pre></div></div>
-<p>我们可以看到，<code class="language-plaintext highlighter-rouge">git</code>又生成了一个新的哈希值<code class="language-plaintext highlighter-rouge">a0423896973644771497bdc03eb99d5281615b51</code>。<br />
-通过哈希值这个唯一标识符，我们也可以访问到对应的文件内容。我们可以通过<code class="language-plaintext highlighter-rouge">git cat-file</code>命令来查看:</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>╭─ ~/git-demo main +2 ───────────────────────────────────────────── 22:57:02 ─╮
-╰─❯ git cat-file <span class="nt">-p</span> 3b18                                                     ─╯
-hello world
 
-╭─ ~/git-demo main +3 ───────────────────────────────────────────── 23:11:13 ─╮
-╰─❯ git cat-file <span class="nt">-p</span> a042                                                     ─╯
-hello world!
-</code></pre></div></div>
-<p>在<code class="language-plaintext highlighter-rouge">git</code>中，文件的内容是以<code class="language-plaintext highlighter-rouge">blob</code>的形式存储的。<code class="language-plaintext highlighter-rouge">blob</code>是<code class="language-plaintext highlighter-rouge">git</code>中最基本的对象类型之一，表示一个二进制大对象（Binary Large Object）。它可以存储任何类型的数据，包括文本、图片、音频等。每个哈希值对应一个<code class="language-plaintext highlighter-rouge">git</code>对象，我们也可以通过<code class="language-plaintext highlighter-rouge">git cat-file</code>命令来查看该对象的类型：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>╭─ ~/git-demo main ────────────────────────────────────────────────── 19:28:04 ─╮
-╰─❯ git cat-file <span class="nt">-t</span> 3b18                                                       ─╯
-blob
-</code></pre></div></div>
-<p>在之后我们会遇到<code class="language-plaintext highlighter-rouge">git</code>的其他对象类型。</p>
-<h2 id="3-提交">3. 提交</h2>
-<p>现在让我们试着提交一个文件。来看看<code class="language-plaintext highlighter-rouge">.git</code>文件夹会发生什么变化。</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>╭─ ~/git-demo main +3 ─────────────────────────────────────────────── 23:12:45 ─╮
-╰─❯ git commit <span class="nt">-m</span> <span class="s2">"first commit"</span>                                               ─╯
-<span class="o">[</span>main（根提交） 757ba86] first commit
- 3 files changed, 3 insertions<span class="o">(</span>+<span class="o">)</span>
- create mode 100644 1.txt
- create mode 100644 2.txt
- create mode 100644 3.txt
-</code></pre></div></div>
-<p>显示为</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>.git
-├── COMMIT_EDITMSG
-├── HEAD
-├── config
-├── description
-├── index
-├── info
-│   └── exclude
-├── logs
-│   ├── HEAD
-│   └── refs
-│       └── heads
-│           └── main
-├── objects
-│   ├── 1e
-│   │   └── f3e0cbf75b1f9063d5bf22a027cd35c3b34ae7
-│   ├── 3b
-│   │   └── 18e512dba79e4c8300dd08aeb37f8e728b8dad
-│   ├── 75
-│   │   └── 7ba86751bfdf19169210b0bc8c9fa7ca208f07
-│   ├── a0
-│   │   └── 423896973644771497bdc03eb99d5281615b51
-│   ├── info
-│   └── pack
-└── refs
-    ├── heads
-    │   └── main
-    └── tags
-</code></pre></div></div>
-<p>可以看到，<code class="language-plaintext highlighter-rouge">.git</code>文件夹下多了一个<code class="language-plaintext highlighter-rouge">COMMIT_EDITMSG</code>文件和一个<code class="language-plaintext highlighter-rouge">logs</code>文件夹。同时，<code class="language-plaintext highlighter-rouge">objects</code>文件夹下多了两个内容。
-让我们使用<code class="language-plaintext highlighter-rouge">git cat-file</code>命令来查看一下多出来的两条哈希值。</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>╭─ ~/git-demo main ────────────────────────────────────────────────── 19:23:44 ─╮
-╰─❯ git cat-file <span class="nt">-p</span> 1ef3                                                       ─╯
-100644 blob 3b18e512dba79e4c8300dd08aeb37f8e728b8dad	1.txt
-100644 blob 3b18e512dba79e4c8300dd08aeb37f8e728b8dad	2.txt
-100644 blob a0423896973644771497bdc03eb99d5281615b51	3.txt
 
-╭─ ~/git-demo main ────────────────────────────────────────────────── 19:33:47 ─╮
-╰─❯ git cat-file <span class="nt">-t</span> 1ef3                                                       ─╯
-tree
-</code></pre></div></div>
-<p>可以看到，<code class="language-plaintext highlighter-rouge">1ef3</code>是一个<code class="language-plaintext highlighter-rouge">tree</code>对象。在里面保存了三个<code class="language-plaintext highlighter-rouge">blob</code>对象，分别对应<code class="language-plaintext highlighter-rouge">1.txt</code>、<code class="language-plaintext highlighter-rouge">2.txt</code>和<code class="language-plaintext highlighter-rouge">3.txt</code>,也就是我们这次提交的三个文件。<br />
-我们再来看看<code class="language-plaintext highlighter-rouge">757ba8</code>这个哈希值：</p>
-<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>╭─ ~/git-demo main ────────────────────────────────────────────────── 19:35:22 ─╮
-╰─❯ git cat-file <span class="nt">-p</span> 757b                                                       ─╯
-tree 1ef3e0cbf75b1f9063d5bf22a027cd35c3b34ae7
-author zxsheather &lt;zxsheather@sjtu.edu.cn&gt; 1746876224 +0800
-committer zxsheather &lt;zxsheather@sjtu.edu.cn&gt; 1746876224 +0800
 
-first commit
+<head>
+  
 
-╭─ ~/git-demo main ────────────────────────────────────────────────── 19:38:43 ─╮
-╰─❯ git cat-file <span class="nt">-t</span> 757b                                                       ─╯
-commit
-</code></pre></div></div>
-<p>可以看到，<code class="language-plaintext highlighter-rouge">757b</code>是一个<code class="language-plaintext highlighter-rouge">commit</code>对象。它包含了一个指向<code class="language-plaintext highlighter-rouge">tree</code>对象的指针，指向了我们刚才提交的文件。它还包含了作者的姓名，邮件等，都是配置<code class="language-plaintext highlighter-rouge">git</code>时填好的。所谓的<code class="language-plaintext highlighter-rouge">1746876224</code>是一个Unix时间戳,表示自1970年1月1日以来的秒数。<code class="language-plaintext highlighter-rouge">+0800</code>表示时区偏移量，这里是中国的标准时区，东八区。<br /></p>]]></content><author><name></name></author><category term="Git" /><summary type="html"><![CDATA[一. 前言 在一开始接触Git与Github时，我对Git的一些操作十分疑惑。作为一名学生，我常用的操作无非以下几种： # 创建仓库 git init # 克隆仓库 git clone [repository url] # 将修改内容保存到暂存区 git add [file path] # 提交到本地仓库 git commit -m "commit message" # 推送到远端仓库 git push [remote branch name] [local branch name] 在创建仓库阶段，git init会创建一个.git文件夹。那我就很疑惑了，.git文件夹是用来干什么的？里面保存了些什么？这值得我们探究 在提交修改阶段，新手的我只会照葫芦画瓢，用最简单的方法： # 将所有修改内容写入暂存区 git add . # 提交到本地仓库 git commit -m "commit message" # 推送到远端仓库 git push origin main It looks like magic! 在终端上打上几行，到Github上看,wow,真的把修改保存并推送上去了。🙌😭🙌 Amazing! 对于一般人来讲，了解这些也许就够用。但我想，这对学计算机的人来说远远不够。毕竟，“计算机中没有魔法”。所以，就让我们详细探究一下git的底层原理，理解这个堪称伟大的版本控制系统。 二. 初探 让我们先来看看这个神秘的.git文件夹中保存着什么： 1. 准备 首先，我们先新建一个git仓库,并切换到该文件夹 ~~~bash // Terminal 1 ╭─ ~ ────────────────────────────────────────────────────────────── 10:37:50 ─╮ ╰─❯ git init git-demo ─╯ 已初始化空的 Git 仓库于 /Users/apple/git-demo/.git/]]></summary></entry><entry><title type="html">栈模拟递归的通用解法</title><link href="http://localhost:4000/2025/03/19/stack_simulate_recursion.html" rel="alternate" type="text/html" title="栈模拟递归的通用解法" /><published>2025-03-19T00:00:00+08:00</published><updated>2025-03-19T00:00:00+08:00</updated><id>http://localhost:4000/2025/03/19/stack_simulate_recursion</id><content type="html" xml:base="http://localhost:4000/2025/03/19/stack_simulate_recursion.html"><![CDATA[<p>我们知道，递归的过程可以用栈来模拟。但对于一些困难的问题，我们好像很难用栈去写。比如说汉诺塔问题。再比如说:</p>
+
+
+
+
+
+  
+    
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>栈模拟递归的通用解法 | Zxsheather</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="栈模拟递归的通用解法" />
+<meta property="og:locale" content="en" />
+<meta name="description" content="我们知道，递归的过程可以用栈来模拟。但对于一些困难的问题，我们好像很难用栈去写。比如说汉诺塔问题。再比如说: int f(int i){ return i &lt;= 1 ? 1 : f(i-1) + g(i-2); } int g(int i){ return i &lt;= 1 ? 1 : f(i+1) + g(i-1); } 在这些例子中，我们该怎么知道什么时候该入队，什么时候该出队呢？比如在第二个例子里，我们调用了f(i),我们并不能把f(i)立刻出队。即使f(i-1)计算完成，我们还需要等到g(i-2)计算完成后才能出队。 此时我们需要持有一种对计算机、程序的一种相当本质的看法：状态机。程序运行本质上都是一些状态的转换。我们在运行的过程中保存当前的状态pc，然后根据当前不同的状态执行不同的任务。 比如对于第二个例子，我们可以定义此时f或g所处于的状态为以下四个状态： enum State { CALL, // 初始调用 CALC_FIRST, // 计算第一个子表达式 CALC_SECOND, // 计算第二个子表达式 RETURN // 返回结果 }; 我们在栈帧中保存以下几个值： struct StackFrame { FuncType func; // 当前执行的函数类型 int i; // 输入参数 State state; // 当前执行状态 int result; // 中间结果存储 }; 取出栈顶的元素top，根据不同的状态，执行以下不同的任务： switch (top.state) { case CALL: // 处理基本情况 if (top.i &lt;= 1) { top.result = 1; top.state = RETURN; } else { // 设置为计算第一个子表达式的状态 top.state = CALC_FIRST; if (top.func == FUNC_F) { // f 函数需要计算 f(i-1) callStack.push({FUNC_F, top.i - 1, CALL, 0}); } else { // g 函数需要计算 f(i+1) callStack.push({FUNC_F, top.i + 1, CALL, 0}); } } break; case CALC_FIRST: // 保存第一个子表达式结果 top.result = finalResult; // 设置为计算第二个子表达式的状态 top.state = CALC_SECOND; if (top.func == FUNC_F) { // f 函数需要计算 g(i-2) callStack.push({FUNC_G, top.i - 2, CALL, 0}); } else { // g 函数需要计算 g(i-1) callStack.push({FUNC_G, top.i - 1, CALL, 0}); } break; case CALC_SECOND: // 计算最终结果 = 第一个子表达式结果 + 第二个子表达式结果 top.result += finalResult; top.state = RETURN; break; case RETURN: // 保存当前函数的计算结果 finalResult = top.result; // 完成计算，弹出栈帧 callStack.pop(); break; } 在其中我们用finalResult变量来传递上一个弹出的栈帧所返回的值，将该值传递给调用它的函数.通过保存状态，我们就知道何时该函数该做什么事情。 以下是完整的代码： ~~~cpp #include #include" />
+<meta property="og:description" content="我们知道，递归的过程可以用栈来模拟。但对于一些困难的问题，我们好像很难用栈去写。比如说汉诺塔问题。再比如说: int f(int i){ return i &lt;= 1 ? 1 : f(i-1) + g(i-2); } int g(int i){ return i &lt;= 1 ? 1 : f(i+1) + g(i-1); } 在这些例子中，我们该怎么知道什么时候该入队，什么时候该出队呢？比如在第二个例子里，我们调用了f(i),我们并不能把f(i)立刻出队。即使f(i-1)计算完成，我们还需要等到g(i-2)计算完成后才能出队。 此时我们需要持有一种对计算机、程序的一种相当本质的看法：状态机。程序运行本质上都是一些状态的转换。我们在运行的过程中保存当前的状态pc，然后根据当前不同的状态执行不同的任务。 比如对于第二个例子，我们可以定义此时f或g所处于的状态为以下四个状态： enum State { CALL, // 初始调用 CALC_FIRST, // 计算第一个子表达式 CALC_SECOND, // 计算第二个子表达式 RETURN // 返回结果 }; 我们在栈帧中保存以下几个值： struct StackFrame { FuncType func; // 当前执行的函数类型 int i; // 输入参数 State state; // 当前执行状态 int result; // 中间结果存储 }; 取出栈顶的元素top，根据不同的状态，执行以下不同的任务： switch (top.state) { case CALL: // 处理基本情况 if (top.i &lt;= 1) { top.result = 1; top.state = RETURN; } else { // 设置为计算第一个子表达式的状态 top.state = CALC_FIRST; if (top.func == FUNC_F) { // f 函数需要计算 f(i-1) callStack.push({FUNC_F, top.i - 1, CALL, 0}); } else { // g 函数需要计算 f(i+1) callStack.push({FUNC_F, top.i + 1, CALL, 0}); } } break; case CALC_FIRST: // 保存第一个子表达式结果 top.result = finalResult; // 设置为计算第二个子表达式的状态 top.state = CALC_SECOND; if (top.func == FUNC_F) { // f 函数需要计算 g(i-2) callStack.push({FUNC_G, top.i - 2, CALL, 0}); } else { // g 函数需要计算 g(i-1) callStack.push({FUNC_G, top.i - 1, CALL, 0}); } break; case CALC_SECOND: // 计算最终结果 = 第一个子表达式结果 + 第二个子表达式结果 top.result += finalResult; top.state = RETURN; break; case RETURN: // 保存当前函数的计算结果 finalResult = top.result; // 完成计算，弹出栈帧 callStack.pop(); break; } 在其中我们用finalResult变量来传递上一个弹出的栈帧所返回的值，将该值传递给调用它的函数.通过保存状态，我们就知道何时该函数该做什么事情。 以下是完整的代码： ~~~cpp #include #include" />
+<link rel="canonical" href="http://localhost:4000/2025/03/19/stack_simulate_recursion.html" />
+<meta property="og:url" content="http://localhost:4000/2025/03/19/stack_simulate_recursion.html" />
+<meta property="og:site_name" content="Zxsheather" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2025-03-19T00:00:00+08:00" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="栈模拟递归的通用解法" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2025-03-19T00:00:00+08:00","datePublished":"2025-03-19T00:00:00+08:00","description":"我们知道，递归的过程可以用栈来模拟。但对于一些困难的问题，我们好像很难用栈去写。比如说汉诺塔问题。再比如说: int f(int i){ return i &lt;= 1 ? 1 : f(i-1) + g(i-2); } int g(int i){ return i &lt;= 1 ? 1 : f(i+1) + g(i-1); } 在这些例子中，我们该怎么知道什么时候该入队，什么时候该出队呢？比如在第二个例子里，我们调用了f(i),我们并不能把f(i)立刻出队。即使f(i-1)计算完成，我们还需要等到g(i-2)计算完成后才能出队。 此时我们需要持有一种对计算机、程序的一种相当本质的看法：状态机。程序运行本质上都是一些状态的转换。我们在运行的过程中保存当前的状态pc，然后根据当前不同的状态执行不同的任务。 比如对于第二个例子，我们可以定义此时f或g所处于的状态为以下四个状态： enum State { CALL, // 初始调用 CALC_FIRST, // 计算第一个子表达式 CALC_SECOND, // 计算第二个子表达式 RETURN // 返回结果 }; 我们在栈帧中保存以下几个值： struct StackFrame { FuncType func; // 当前执行的函数类型 int i; // 输入参数 State state; // 当前执行状态 int result; // 中间结果存储 }; 取出栈顶的元素top，根据不同的状态，执行以下不同的任务： switch (top.state) { case CALL: // 处理基本情况 if (top.i &lt;= 1) { top.result = 1; top.state = RETURN; } else { // 设置为计算第一个子表达式的状态 top.state = CALC_FIRST; if (top.func == FUNC_F) { // f 函数需要计算 f(i-1) callStack.push({FUNC_F, top.i - 1, CALL, 0}); } else { // g 函数需要计算 f(i+1) callStack.push({FUNC_F, top.i + 1, CALL, 0}); } } break; case CALC_FIRST: // 保存第一个子表达式结果 top.result = finalResult; // 设置为计算第二个子表达式的状态 top.state = CALC_SECOND; if (top.func == FUNC_F) { // f 函数需要计算 g(i-2) callStack.push({FUNC_G, top.i - 2, CALL, 0}); } else { // g 函数需要计算 g(i-1) callStack.push({FUNC_G, top.i - 1, CALL, 0}); } break; case CALC_SECOND: // 计算最终结果 = 第一个子表达式结果 + 第二个子表达式结果 top.result += finalResult; top.state = RETURN; break; case RETURN: // 保存当前函数的计算结果 finalResult = top.result; // 完成计算，弹出栈帧 callStack.pop(); break; } 在其中我们用finalResult变量来传递上一个弹出的栈帧所返回的值，将该值传递给调用它的函数.通过保存状态，我们就知道何时该函数该做什么事情。 以下是完整的代码： ~~~cpp #include #include","headline":"栈模拟递归的通用解法","mainEntityOfPage":{"@type":"WebPage","@id":"http://localhost:4000/2025/03/19/stack_simulate_recursion.html"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"http://localhost:4000/assets/img/2.png"}},"url":"http://localhost:4000/2025/03/19/stack_simulate_recursion.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+  
+
+  
+
+
+
+  <meta name="color-scheme" content="dark light">
+
+
+
+  <meta name="theme-color" content="rgb(25,55,71)">
+
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+
+<meta name="mobile-web-app-capable" content="yes">
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Zxsheather">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+<meta name="application-name" content="Zxsheather">
+
+<meta name="generator" content="Hydejack v9.2.1" />
+
+
+<link rel="alternate" href="http://localhost:4000/2025/03/19/stack_simulate_recursion.html" hreflang="en">
+
+<link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Zxsheather" />
+
+
+<link rel="shortcut icon"    href="/assets/icons/favicon.ico">
+<link rel="apple-touch-icon" href="/assets/icons/icon-192x192.png">
+
+<link rel="manifest" href="/assets/site.webmanifest">
+
+
+
+
+
+<link rel="preload" href="/assets/img/swipe.svg" as="image" id="_hrefSwipeSVG">
+
+
+
+
+
+
+<script>((r,a)=>{function d(e,t,n,o){e.addEventListener?e.addEventListener(t,n,o):e.attachEvent?e.attachEvent("on"+t,n):e["on"+t]=n}r.loadJS=function(e,t){var n=a.createElement("script"),e=(n.src=e,t&&d(n,"load",t,{once:!0}),a.scripts[0]);return e.parentNode.insertBefore(n,e),n},r._loaded=!1,r.loadJSDeferred=function(e,t){var n=a.createElement("script");function o(){r._loaded=!0,t&&d(n,"load",t,{once:!0});var e=a.scripts[0];e.parentNode.insertBefore(n,e)}return n.src=e,r._loaded?o():d(r,"load",o,{once:!0}),n},r.setRel=r.setRelStylesheet=function(e){d(a.getElementById(e),"load",function(){this.rel="stylesheet"},{once:!0})}})(window,document);
+!function(a){"use strict";var b=function(b,c,d){function e(a){return h.body?a():void setTimeout(function(){e(a)})}function f(){i.addEventListener&&i.removeEventListener("load",f),i.media=d||"all"}var g,h=a.document,i=h.createElement("link");if(c)g=c;else{var j=(h.body||h.getElementsByTagName("head")[0]).childNodes;g=j[j.length-1]}var k=h.styleSheets;i.rel="stylesheet",i.href=b,i.media="only x",e(function(){g.parentNode.insertBefore(i,c?g:g.nextSibling)});var l=function(a){for(var b=i.href,c=k.length;c--;)if(k[c].href===b)return a();setTimeout(function(){l(a)})};return i.addEventListener&&i.addEventListener("load",f),i.onloadcssdefined=l,l(f),i};"undefined"!=typeof exports?exports.loadCSS=b:a.loadCSS=b}("undefined"!=typeof global?global:this);
+!function(a){if(a.loadCSS){var b=loadCSS.relpreload={};if(b.support=function(){try{return a.document.createElement("link").relList.supports("preload")}catch(b){return!1}},b.poly=function(){for(var b=a.document.getElementsByTagName("link"),c=0;c<b.length;c++){var d=b[c];"preload"===d.rel&&"style"===d.getAttribute("as")&&(a.loadCSS(d.href,d,d.getAttribute("media")),d.rel=null)}},!b.support()){b.poly();var c=a.setInterval(b.poly,300);a.addEventListener&&a.addEventListener("load",function(){b.poly(),a.clearInterval(c)}),a.attachEvent&&a.attachEvent("onload",function(){a.clearInterval(c)})}}}(this);
+!function(w) {
+  w._baseURL = '/';
+  w._publicPath = '/assets/js/';
+  w._noPushState = false;
+  w._noDrawer = false;
+  w._noNavbar = false;
+  w._noToc = false;
+  w._noSearch = false;
+  w._search = {
+    DATA_URL: '/assets/sitedata.json?no-cache',
+    STORAGE_KEY: 'mini-search/',
+    INDEX_KEY: 'index--2025-05-10T21:36:23+08:00',
+  };
+  w._clapButton = true;
+}(window);</script>
+
+
+
+<!--[if gt IE 8]><!---->
+
+  
+
+
+
+
+<link rel="stylesheet" href="/assets/css/hydejack-9.2.1.css" id="_stylePreload">
+<link rel="stylesheet" href="/assets/icomoon/style.css" id="_iconsPreload">
+
+
+
+
+  <style id="_pageStyle">
+
+html{--accent-color: rgb(79,177,186);--accent-color-faded: rgba(79, 177, 186, 0.5);--accent-color-highlight: rgba(79, 177, 186, 0.1);--accent-color-darkened: rgb(63.8602040816, 154.5602040816, 162.8897959184);--theme-color: rgb(25,55,71);--dark-mode-body-bg: hsl(200.8695652174, 5.9895833333%, 17.5%);--dark-mode-border-color: hsl(200.8695652174, 5.9895833333%, 22.5%)}
+</style>
+
+
+<!--<![endif]-->
+
+
+
+
+
+</head>
+
+<body class="no-break-layout">
+  
+<script>
+  window._sunrise = 6;
+  window._sunset =  18;
+  ((e,s)=>{var d="light-mode",a="dark-mode",o=(new Date).getHours();"matchMedia"in e&&e.matchMedia("(prefers-color-scheme)")||(e=(o=o<=e._sunrise||o>=e._sunset?a:d)==a?d:a,s.body.classList.add(o),s.body.classList.remove(e))})(window,document);
+
+</script>
+
+
+
+<hy-push-state
+  id="_pushState"
+  replace-selector="#_main"
+  link-selector="a[href]:not([href^='/assets/']):not(.external):not(.no-push-state)"
+  script-selector="script"
+  duration="500"
+  hashchange
+>
+  
+  
+  <div id="_navbar" class="navbar fixed-top">
+  <div class="content">
+    <span class="sr-only">Jump to:</span>
+    <div class="nav-btn-bar">
+      <a id="_menu" class="nav-btn no-hover" href="#_drawer--opened">
+        <span class="sr-only">Navigation</span>
+        <span class="icon-menu"></span>
+      </a>
+      <div class="nav-span"></div>
+    </div>
+  </div>
+</div>
+<hr class="sr-only" hidden />
+
+  <main
+  id="_main"
+  class="content layout-post"
+  role="main"
+>
+  <nav id="breadcrumbs" class="screen-only"><ul>
+  
+  
+    <li><a href="/">home</a></li>
+    
+      <li>
+        
+          <span>/</span>
+          
+          
+          <a href="/2025/">2025</a>
+        
+      </li>
+    
+      <li>
+        
+          <span>/</span>
+          
+          
+          <a href="/2025/03/">03</a>
+        
+      </li>
+    
+      <li>
+        
+          <span>/</span>
+          
+          
+          <a href="/2025/03/19/">19</a>
+        
+      </li>
+    
+      <li>
+        
+          <span>/</span>
+          <span>stack_simulate_recursion.html</span>
+        
+      </li>
+    
+  
+</ul></nav>
+  
+
+
+
+
+
+
+
+
+
+
+<article id="post-2025-03-19-stack_simulate_recursion" class="page post mb6" role="article">
+  <header>
+    <h1 class="post-title flip-project-title">
+      
+        栈模拟递归的通用解法
+      
+    </h1>
+
+    <div class="post-date">
+      
+      <span class="ellipsis mr1">
+        <time datetime="2025-03-19T00:00:00+08:00">19 Mar 2025</time>  on <span>Data-structure</span>
+      </span>
+      
+        
+      
+    </div>
+
+    
+    
+
+    
+
+
+
+  <div class="hr pb0"></div>
+
+
+  </header>
+
+  
+    <p>我们知道，递归的过程可以用栈来模拟。但对于一些困难的问题，我们好像很难用栈去写。比如说汉诺塔问题。再比如说:</p>
 <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">f</span><span class="p">(</span><span class="kt">int</span> <span class="n">i</span><span class="p">){</span>
     <span class="k">return</span> <span class="n">i</span> <span class="o">&lt;=</span> <span class="mi">1</span> <span class="o">?</span> <span class="mi">1</span> <span class="o">:</span> <span class="n">f</span><span class="p">(</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">+</span> <span class="n">g</span><span class="p">(</span><span class="n">i</span><span class="o">-</span><span class="mi">2</span><span class="p">);</span>
 <span class="p">}</span>
@@ -539,19 +555,249 @@ commit
     <span class="n">cout</span> <span class="o">&lt;&lt;</span> <span class="s">"count:"</span> <span class="o">&lt;&lt;</span> <span class="n">result</span><span class="p">;</span>
     <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
 <span class="p">}</span>
-</code></pre></div></div>]]></content><author><name></name></author><category term="Data-Structure" /><summary type="html"><![CDATA[我们知道，递归的过程可以用栈来模拟。但对于一些困难的问题，我们好像很难用栈去写。比如说汉诺塔问题。再比如说: int f(int i){ return i &lt;= 1 ? 1 : f(i-1) + g(i-2); } int g(int i){ return i &lt;= 1 ? 1 : f(i+1) + g(i-1); } 在这些例子中，我们该怎么知道什么时候该入队，什么时候该出队呢？比如在第二个例子里，我们调用了f(i),我们并不能把f(i)立刻出队。即使f(i-1)计算完成，我们还需要等到g(i-2)计算完成后才能出队。 此时我们需要持有一种对计算机、程序的一种相当本质的看法：状态机。程序运行本质上都是一些状态的转换。我们在运行的过程中保存当前的状态pc，然后根据当前不同的状态执行不同的任务。 比如对于第二个例子，我们可以定义此时f或g所处于的状态为以下四个状态： enum State { CALL, // 初始调用 CALC_FIRST, // 计算第一个子表达式 CALC_SECOND, // 计算第二个子表达式 RETURN // 返回结果 }; 我们在栈帧中保存以下几个值： struct StackFrame { FuncType func; // 当前执行的函数类型 int i; // 输入参数 State state; // 当前执行状态 int result; // 中间结果存储 }; 取出栈顶的元素top，根据不同的状态，执行以下不同的任务： switch (top.state) { case CALL: // 处理基本情况 if (top.i &lt;= 1) { top.result = 1; top.state = RETURN; } else { // 设置为计算第一个子表达式的状态 top.state = CALC_FIRST; if (top.func == FUNC_F) { // f 函数需要计算 f(i-1) callStack.push({FUNC_F, top.i - 1, CALL, 0}); } else { // g 函数需要计算 f(i+1) callStack.push({FUNC_F, top.i + 1, CALL, 0}); } } break; case CALC_FIRST: // 保存第一个子表达式结果 top.result = finalResult; // 设置为计算第二个子表达式的状态 top.state = CALC_SECOND; if (top.func == FUNC_F) { // f 函数需要计算 g(i-2) callStack.push({FUNC_G, top.i - 2, CALL, 0}); } else { // g 函数需要计算 g(i-1) callStack.push({FUNC_G, top.i - 1, CALL, 0}); } break; case CALC_SECOND: // 计算最终结果 = 第一个子表达式结果 + 第二个子表达式结果 top.result += finalResult; top.state = RETURN; break; case RETURN: // 保存当前函数的计算结果 finalResult = top.result; // 完成计算，弹出栈帧 callStack.pop(); break; } 在其中我们用finalResult变量来传递上一个弹出的栈帧所返回的值，将该值传递给调用它的函数.通过保存状态，我们就知道何时该函数该做什么事情。 以下是完整的代码： ~~~cpp #include #include]]></summary></entry><entry><title type="html">欢迎来到我的网站</title><link href="http://localhost:4000/introduction/2025/03/17/welcome_to_my_site.html" rel="alternate" type="text/html" title="欢迎来到我的网站" /><published>2025-03-17T00:00:00+08:00</published><updated>2025-03-17T00:00:00+08:00</updated><id>http://localhost:4000/introduction/2025/03/17/welcome_to_my_site</id><content type="html" xml:base="http://localhost:4000/introduction/2025/03/17/welcome_to_my_site.html"><![CDATA[<p class="faded lead">Writing is a solitary art.   ——Susan Sontag<br />
-I write to make time pass more meaningfully.   ——Jorge Luis Borges</p>
+</code></pre></div></div>
 
-<h2 id="个人的时光之河">个人的时光之河</h2>
-<h3 id="why-i-create-this-site">  ——Why I create this site?</h3>
-<p>   我一直希望拥有一个独属于自己个人的一片小的天地。我感觉自己是一个很矛盾的人（不过也许每个人都是矛盾的），愿意分享，却不喜欢太热闹（所以我不常发朋友圈）；喜欢和别的人交流，却有时讨厌在太多的羁绊中花费太多精力；喜欢独处，却有时也感到孤独。而个人网站便是一个清净的空间，可以供我写下自己的思考与感悟，分享我个人的，一些小小的感受。正如苏珊·桑塔格所说：“写作是独处的艺术”。<br />
-<br />
-   我们通常认为博客是用来分享技术的手段。事实确然。我们在论坛中碰撞思维的火花，传播自己的知识秘笈,汲取别人的真知灼见。但若仅仅是技术的分享，在目前的时代，个人的博客，尤其是一个学生的博客似乎已然意义了了。一方面，介绍各种技术的博客琳琅满目，更不要提当今AI迅猛发展，生成式AI可以在眨眼之间生成质量颇高的内容。很多时候我也非常沮丧，自己用心写出的代码，耗时费力写完的项目，AI只用了几秒钟时间就能产出完成，甚至结构更加精良，细节更加完善。另一方面，知识的迭代速度越来越快，现在主流的观点与思想，在几年后也许已经变成一堆破铜烂铁，无人问津。但我想这个时代也有好处：它逼迫着我们转换看待写作或者写博客的角度。<br />
-<br />
-   写博客是<strong>知识的再整理</strong>。我们再试图教会别人的过程中也使一个知识点在我们脑海中愈发清晰。为了让别人理解一样技能，一种思考，我们自己首先需要有一个完整的良好的理解。而且，我们在给别人讲解的过程中，我们会将自己的思路展开。此时我们往往能在其中发现之前未曾注意到的漏洞，或者自己理解不深入的地方。我们也可以就此完善自己的思考。这在学习中是十分有益的。<br />
-<br />
-   写博客也是一种<strong>对抗时间的方式</strong>。时光不断流逝，却没留下任何足迹。飞鸿踏雪，杳无音讯。而博客，在我看来，更是<strong>时光的注脚</strong>。光阴似箭，日月如梭，而写作，就像一张快照，将我的思考，我的感悟定格在一个静止的时间。一篇篇博客，就像一个又一个纪念碑，标立在时间之河的两岸，记录着我的来路，描绘着我思考的成长历程，或许，也标示着我的未来。<br />
-<br />
-   当未来的我看这条由博客标立的时光之河，也许我也会颇有感慨吧。
-<br /><br />
-<img src="/assets/img/river_of_time.png" alt="Full-width image" class="lead" width="800" height="100" loading="lazy" /></p>]]></content><author><name></name></author><category term="introduction" /><category term="myself" /><summary type="html"><![CDATA[Writing is a solitary art.   ——Susan Sontag I write to make time pass more meaningfully.   ——Jorge Luis Borges 个人的时光之河   ——Why I create this site?    我一直希望拥有一个独属于自己个人的一片小的天地。我感觉自己是一个很矛盾的人（不过也许每个人都是矛盾的），愿意分享，却不喜欢太热闹（所以我不常发朋友圈）；喜欢和别的人交流，却有时讨厌在太多的羁绊中花费太多精力；喜欢独处，却有时也感到孤独。而个人网站便是一个清净的空间，可以供我写下自己的思考与感悟，分享我个人的，一些小小的感受。正如苏珊·桑塔格所说：“写作是独处的艺术”。    我们通常认为博客是用来分享技术的手段。事实确然。我们在论坛中碰撞思维的火花，传播自己的知识秘笈,汲取别人的真知灼见。但若仅仅是技术的分享，在目前的时代，个人的博客，尤其是一个学生的博客似乎已然意义了了。一方面，介绍各种技术的博客琳琅满目，更不要提当今AI迅猛发展，生成式AI可以在眨眼之间生成质量颇高的内容。很多时候我也非常沮丧，自己用心写出的代码，耗时费力写完的项目，AI只用了几秒钟时间就能产出完成，甚至结构更加精良，细节更加完善。另一方面，知识的迭代速度越来越快，现在主流的观点与思想，在几年后也许已经变成一堆破铜烂铁，无人问津。但我想这个时代也有好处：它逼迫着我们转换看待写作或者写博客的角度。    写博客是知识的再整理。我们再试图教会别人的过程中也使一个知识点在我们脑海中愈发清晰。为了让别人理解一样技能，一种思考，我们自己首先需要有一个完整的良好的理解。而且，我们在给别人讲解的过程中，我们会将自己的思路展开。此时我们往往能在其中发现之前未曾注意到的漏洞，或者自己理解不深入的地方。我们也可以就此完善自己的思考。这在学习中是十分有益的。    写博客也是一种对抗时间的方式。时光不断流逝，却没留下任何足迹。飞鸿踏雪，杳无音讯。而博客，在我看来，更是时光的注脚。光阴似箭，日月如梭，而写作，就像一张快照，将我的思考，我的感悟定格在一个静止的时间。一篇篇博客，就像一个又一个纪念碑，标立在时间之河的两岸，记录着我的来路，描绘着我思考的成长历程，或许，也标示着我的未来。    当未来的我看这条由博客标立的时光之河，也许我也会颇有感慨吧。]]></summary></entry></feed>
+
+  
+</article>
+
+
+
+  <hr class="dingbat related mb6" />
+
+
+
+
+
+
+  
+     
+
+
+
+  
+
+  
+  
+
+  
+    
+
+
+  <aside class="related mb4" role="complementary">  <h2 class="hr-bottom">Related Posts</h2>  <ul class="related-posts">                  <li class="h4">  <a href="/2025/05/09/git-underlying-principles.html" class="flip-title"><span>Git底层原理详解</span></a>  <time class="faded fine" datetime="2025-05-09T00:00:00+08:00">09 May 2025</time></li>                        <li class="h4">  <a href="/introduction/2025/03/17/welcome_to_my_site.html" class="flip-title"><span>欢迎来到我的网站</span></a>  <time class="faded fine" datetime="2025-03-17T00:00:00+08:00">17 Mar 2025</time></li>            </ul></aside>
+
+  
+
+  
+  
+
+  
+    
+
+  
+
+
+  
+<footer class="content" role="contentinfo">
+  <hr/>
+  
+    <p><small class="copyright">© 2024. All rights reserved.
+</small></p>
+  
+  
+    <p><small>Powered by <a class="external" href="https://hydejack.com/">Hydejack</a> v<span id="_version">9.2.1</span></small></p>
+  <hr class="sr-only"/>
+</footer>
+
+
+</main>
+
+  <hy-drawer
+  id="_drawer"
+  class=""
+  side="left"
+  threshold="10"
+  noscroll
+  
+>
+  <header id="_sidebar" class="sidebar" role="banner">
+    
+
+
+
+
+<div class="sidebar-bg sidebar-overlay" style="background-color:rgb(25,55,71);background-image:url(/assets/img/sidebar-bg.jpg)"></div>
+
+    <div class="sidebar-sticky">
+  <div class="sidebar-about">
+    
+      <a class="no-hover" href="/" tabindex="-1">
+        <img src="/assets/img/2.png" class="avatar" alt="Zxsheather" width="120" height="120" loading="lazy" />
+      </a>
+    
+    <a class="sidebar-title" href="/"><h2 class="h1">Zxsheather</h2></a>
+    
+    
+      <p class="">
+        A CS Undergraduate
+
+      </p>
+    
+  </div>
+
+  <nav class="sidebar-nav heading" role="navigation">
+    <span class="sr-only">Navigation:</span>
+<ul>
+  
+    
+    
+    
+
+    
+  
+</ul>
+
+  </nav>
+
+  
+  <div class="sidebar-social">
+    <span class="sr-only">Social</span>
+<ul>
+  
+    
+    
+
+    
+    
+      
+
+
+
+  
+
+  
+  
+  
+  
+
+  
+
+  
+
+  <li>
+    <a href="https://github.com/zxsheather" title="GitHub" class="no-mark-external">
+      <span class="icon-github"></span>
+      <span class="sr-only">GitHub</span>
+    </a>
+  </li>
+
+
+    
+
+    
+    
+      
+
+
+
+  
+
+  
+  
+  
+  
+
+  
+
+  
+
+  <li>
+    <a href="mailto:zxsheather@sjtu.edu.cn" title="Email" class="no-mark-external">
+      <span class="icon-mail"></span>
+      <span class="sr-only">Email</span>
+    </a>
+  </li>
+
+
+    
+  
+</ul>
+
+  </div>
+</div>
+  </header>
+</hy-drawer>
+<hr class="sr-only" hidden />
+
+</hy-push-state>
+
+
+  <!--[if gt IE 10]><!---->
+  <script nomodule>(()=>{var t,n=document.createElement("script");!("noModule"in n)&&"onbeforeload"in n&&(t=!1,document.addEventListener("beforeload",function(e){if(e.target===n)t=!0;else if(!e.target.hasAttribute("nomodule")||!t)return;e.preventDefault()},!0),n.type="module",n.src=".",document.head.appendChild(n),n.remove())})();
+</script>
+  <script src="/assets/js/hydejack-9.2.1.js" type="module"></script>
+  <script src="/assets/js/LEGACY-hydejack-9.2.1.js" nomodule defer></script>
+  
+
+  
+
+<!--<![endif]-->
+  
+
+
+
+<div hidden>
+  
+  <h2 class="sr-only">Templates:</h2>
+
+  <template id="_animation-template">
+  <div class="animation-main fixed-top">
+    <nav id="breadcrumbs" class="screen-only"><ul>
+  
+  
+</ul></nav>
+    <div class="content">
+      <div class="page"></div>
+    </div>
+  </div>
+</template>
+
+  <template id="_loading-template">
+  <div class="loading nav-btn fr">
+    <span class="sr-only">Loading…</span>
+    <span class="icon-cog"></span>
+  </div>
+</template>
+
+  <template id="_error-template">
+  <div class="page">
+    <h1 class="page-title">Error</h1>
+    
+    
+    <p class="lead">
+      Sorry, an error occurred while loading: <a class="this-link" href=""></a>.
+    </p>
+  </div>
+</template>
+
+  <template id="_permalink-template">
+  <a href="#" class="permalink">
+    <span class="sr-only">Permalink</span>
+    <span class="content-hash"></span>
+  </a>
+</template>
+
+  
+    <template id="_dark-mode-template">
+  <button id="_dark-mode" class="nav-btn no-hover" >
+    <span class="sr-only">Dark Mode</span>
+    <span class="icon-brightness-contrast"></span>
+  </button>
+</template>
+
+  
+</div>
+
+
+</body>
+</html>
