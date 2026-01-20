@@ -1,14 +1,14 @@
-source "https://rubygems.org"
+# frozen_string_literal: true
 
-gem "jekyll", "~> 4.4.1"
-gem "webrick", "~> 1.7"
+source "https://gems.ruby-china.com"
 
-# 如果你想使用 GitHub Pages，取消下面这行的注释，并注释掉上面的 jekyll 行
-# gem "github-pages", group: :jekyll_plugins
+gem "jekyll-theme-chirpy", "~> 7.4", ">= 7.4.1"
 
-group :jekyll_plugins do
-  gem "jekyll-feed", "~> 0.12"
-  gem "jekyll-seo-tag", "~> 2.8"
-end 
+# gem "html-proofer", "~> 5.0", group: :test
 
-gem "jekyll-theme-hydejack"
+platforms :mingw, :x64_mingw, :mswin, :jruby do
+  gem "tzinfo", ">= 1", "< 3"
+  gem "tzinfo-data"
+end
+
+gem "wdm", "~> 0.2.0", :platforms => [:mingw, :x64_mingw, :mswin]

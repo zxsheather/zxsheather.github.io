@@ -2,17 +2,18 @@
 layout: post
 title: "欢迎来到我的网站"
 date: 2025-03-17
-categories: [introduction]
-tags: [myself]
-featured: true
+categories: [随笔]
+tags: [个人介绍]
+pin: true
 ---
 
-Writing is a solitary art.&emsp;&emsp; ——Susan Sontag\\
-I write to make time pass more meaningfully.&emsp;&emsp; ——Jorge Luis Borges
-{:.faded .lead}
+> Writing is a solitary art. —— Susan Sontag
+> 
+> I write to make time pass more meaningfully. —— Jorge Luis Borges
 
 ## 个人的时光之河
-### &emsp;&emsp;——Why I create this site?
+
+### Why I create this site?
 &emsp;&emsp; 我一直希望拥有一个独属于自己个人的一片小的天地。我感觉自己是一个很矛盾的人（不过也许每个人都是矛盾的），愿意分享，却不喜欢太热闹（所以我不常发朋友圈）；喜欢和别的人交流，却有时讨厌在太多的羁绊中花费太多精力；喜欢独处，却有时也感到孤独。而个人网站便是一个清净的空间，可以供我写下自己的思考与感悟，分享我个人的，一些小小的感受。正如苏珊·桑塔格所说：“写作是独处的艺术”。\\
 <br>
 &emsp;&emsp; 我们通常认为博客是用来分享技术的手段。事实确然。我们在论坛中碰撞思维的火花，传播自己的知识秘笈,汲取别人的真知灼见。但若仅仅是技术的分享，在目前的时代，个人的博客，尤其是一个学生的博客似乎已然意义了了。一方面，介绍各种技术的博客琳琅满目，更不要提当今AI迅猛发展，生成式AI可以在眨眼之间生成质量颇高的内容。很多时候我也非常沮丧，自己用心写出的代码，耗时费力写完的项目，AI只用了几秒钟时间就能产出完成，甚至结构更加精良，细节更加完善。另一方面，知识的迭代速度越来越快，现在主流的观点与思想，在几年后也许已经变成一堆破铜烂铁，无人问津。但我想这个时代也有好处：它逼迫着我们转换看待写作或者写博客的角度。\\
@@ -21,6 +22,7 @@ I write to make time pass more meaningfully.&emsp;&emsp; ——Jorge Luis Borges
 <br>
 &emsp;&emsp; 写博客也是一种**对抗时间的方式**。时光不断流逝，却没留下任何足迹。飞鸿踏雪，杳无音讯。而博客，在我看来，更是**时光的注脚**。光阴似箭，日月如梭，而写作，就像一张快照，将我的思考，我的感悟定格在一个静止的时间。一篇篇博客，就像一个又一个纪念碑，标立在时间之河的两岸，记录着我的来路，描绘着我思考的成长历程，或许，也标示着我的未来。\\
 <br>
-&emsp;&emsp; 当未来的我看这条由博客标立的时光之河，也许我也会颇有感慨吧。
-<br><br>
-![Full-width image]({{ '/assets/img/river_of_time.png' | relative_url }}){:.lead width="800" height="100" loading="lazy"}
+当未来的我看这条由博客标立的时光之河，也许我也会颇有感慨吧。
+
+![river_of_time](/assets/img/river_of_time.png){: w="800" }
+_时光之河_

@@ -1,8 +1,10 @@
 ---
-layout: page
-title: Git底层原理详解
-data: 2025-05-09
-tags: [Git]
+layout: post
+title: "Git底层原理详解"
+date: 2025-05-09
+categories: [技术, 工具]
+tags: [Git, 版本控制]
+toc: true
 ---
 # 一. 前言
 在一开始接触Git与Github时，我对Git的一些操作十分疑惑。作为一名学生，我常用的操作无非以下几种：
