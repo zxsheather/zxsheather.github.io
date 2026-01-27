@@ -1,0 +1,669 @@
+<h2 id="概述">概述</h2>
+
+<p>这是引导加载程序中最复杂的部分。它的任务是扫描系统中所有硬盘的分区表，找到包含 Pintos 内核的可启动分区。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#### Read the partition table on each system hard disk and scan for a
+#### partition of type 0x20, which is the type that we use for a
+#### Pintos kernel.
+
+	mov $0x80, %dl			# Hard disk 0.
+read_mbr:
+	sub %ebx, %ebx			# Sector 0.
+	mov $0x2000, %ax		# Use 0x20000 for buffer.
+	mov %ax, %es
+	call read_sector
+	jc no_such_drive
+
+	# Print hd[a-z].
+	call puts
+	.string " hd"
+	mov %dl, %al
+	add $'a' - 0x80, %al
+	call putc
+
+	# Check for MBR signature--if not present, it's not a
+	# partitioned hard disk.
+	cmpw $0xaa55, %es:510
+	jne next_drive
+
+	mov $446, %si			# Offset of partition table entry 1.
+	mov $'1', %al
+check_partition:
+	# Is it an unused partition?
+	cmpl $0, %es:(%si)
+	je next_partition
+
+	# Print [1-4].
+	call putc
+
+	# Is it a Pintos kernel partition?
+	cmpb $0x20, %es:4(%si)
+	jne next_partition
+
+	# Is it a bootable partition?
+	cmpb $0x80, %es:(%si)
+	je load_kernel
+
+next_partition:
+	# No match for this partition, go on to the next one.
+	add $16, %si			# Offset to next partition table entry.
+	inc %al
+	cmp $510, %si
+	jb check_partition
+
+next_drive:
+	# No match on this drive, go on to the next one.
+	inc %dl
+	jnc read_mbr
+
+no_such_drive:
+no_boot_partition:
+	# Didn't find a Pintos kernel partition anywhere, give up.
+	call puts
+	.string "\rNot found\r"
+
+	# Notify BIOS that boot failed.  See [IntrList].
+	int $0x18
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="前置知识">前置知识</h2>
+
+<h3 id="硬盘的基本结构">硬盘的基本结构</h3>
+
+<p>硬盘由多个<strong>扇区（Sector）</strong>组成，每个扇区通常是 512 字节。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>硬盘结构：
+┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
+│ 扇区 0  │ 扇区 1  │ 扇区 2  │ 扇区 3  │   ...   │ 扇区 N  │
+│  (MBR)  │         │         │         │         │         │
+└─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
+</code></pre></div></div>
+
+<h3 id="什么是-mbr主引导记录">什么是 MBR（主引导记录）？</h3>
+
+<p>MBR 是硬盘的第一个扇区（扇区 0），大小 512 字节，包含：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>MBR 结构（512 字节）：
+┌───────────────────────────────────────┐ 偏移 0
+│                                       │
+│          引导代码区                    │
+│        （446 字节）                    │
+│                                       │
+├───────────────────────────────────────┤ 偏移 446
+│          分区表项 1（16 字节）         │
+├───────────────────────────────────────┤ 偏移 462
+│          分区表项 2（16 字节）         │
+├───────────────────────────────────────┤ 偏移 478
+│          分区表项 3（16 字节）         │
+├───────────────────────────────────────┤ 偏移 494
+│          分区表项 4（16 字节）         │
+├───────────────────────────────────────┤ 偏移 510
+│       启动签名 0xAA55（2 字节）        │
+└───────────────────────────────────────┘ 偏移 512
+</code></pre></div></div>
+
+<h3 id="分区表项结构">分区表项结构</h3>
+
+<p>每个分区表项 16 字节：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>偏移</th>
+      <th>大小</th>
+      <th>内容</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0</td>
+      <td>1</td>
+      <td>启动标志</td>
+      <td>0x80=可启动, 0x00=不可启动</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>1</td>
+      <td>起始磁头</td>
+      <td>CHS 寻址（已过时）</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>2</td>
+      <td>起始扇区/柱面</td>
+      <td>CHS 寻址（已过时）</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>1</td>
+      <td><strong>分区类型</strong></td>
+      <td>标识分区内容类型</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>1</td>
+      <td>结束磁头</td>
+      <td>CHS 寻址（已过时）</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>2</td>
+      <td>结束扇区/柱面</td>
+      <td>CHS 寻址（已过时）</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td>4</td>
+      <td><strong>起始 LBA</strong></td>
+      <td>分区起始扇区号</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td>4</td>
+      <td><strong>扇区总数</strong></td>
+      <td>分区包含的扇区数</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="常见分区类型">常见分区类型</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>类型码</th>
+      <th>含义</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0x00</td>
+      <td>空/未使用</td>
+    </tr>
+    <tr>
+      <td>0x01</td>
+      <td>FAT12</td>
+    </tr>
+    <tr>
+      <td>0x04</td>
+      <td>FAT16 (&lt; 32MB)</td>
+    </tr>
+    <tr>
+      <td>0x05</td>
+      <td>扩展分区</td>
+    </tr>
+    <tr>
+      <td>0x06</td>
+      <td>FAT16 (&gt; 32MB)</td>
+    </tr>
+    <tr>
+      <td>0x07</td>
+      <td>NTFS / exFAT</td>
+    </tr>
+    <tr>
+      <td>0x0B</td>
+      <td>FAT32 (CHS)</td>
+    </tr>
+    <tr>
+      <td>0x0C</td>
+      <td>FAT32 (LBA)</td>
+    </tr>
+    <tr>
+      <td>0x0F</td>
+      <td>扩展分区 (LBA)</td>
+    </tr>
+    <tr>
+      <td><strong>0x20</strong></td>
+      <td><strong>Pintos 内核</strong></td>
+    </tr>
+    <tr>
+      <td>0x82</td>
+      <td>Linux swap</td>
+    </tr>
+    <tr>
+      <td>0x83</td>
+      <td>Linux 文件系统</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="bios-硬盘编号">BIOS 硬盘编号</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>编号</th>
+      <th>设备</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0x00-0x7F</td>
+      <td>软盘（0x00=A:, 0x01=B:）</td>
+    </tr>
+    <tr>
+      <td>0x80</td>
+      <td>第一个硬盘</td>
+    </tr>
+    <tr>
+      <td>0x81</td>
+      <td>第二个硬盘</td>
+    </tr>
+    <tr>
+      <td>…</td>
+      <td>更多硬盘</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="逐行详解">逐行详解</h2>
+
+<h3 id="阶段-1开始扫描第一个硬盘">阶段 1：开始扫描第一个硬盘</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mov $0x80, %dl			# Hard disk 0.
+</code></pre></div></div>
+
+<p>将 DL 设置为 0x80，表示第一个硬盘。</p>
+
+<hr />
+
+<h3 id="阶段-2读取-mbr">阶段 2：读取 MBR</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>read_mbr:
+	sub %ebx, %ebx			# Sector 0.
+	mov $0x2000, %ax		# Use 0x20000 for buffer.
+	mov %ax, %es
+	call read_sector
+	jc no_such_drive
+</code></pre></div></div>
+
+<p><strong>逐行解释：</strong></p>
+
+<ol>
+  <li>
+    <p><strong><code class="language-plaintext highlighter-rouge">sub %ebx, %ebx</code></strong>：EBX = 0，表示要读取扇区 0（MBR）</p>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">mov $0x2000, %ax</code> 和 <code class="language-plaintext highlighter-rouge">mov %ax, %es</code></strong>：
+    <ul>
+      <li>设置 ES = 0x2000</li>
+      <li>实际缓冲区地址 = ES × 16 + 0 = 0x2000 × 16 = 0x20000</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">call read_sector</code></strong>：调用扇区读取函数（稍后详解）
+    <ul>
+      <li>DL = 硬盘号</li>
+      <li>EBX = 扇区号</li>
+      <li>ES:0 = 缓冲区地址</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">jc no_such_drive</code></strong>：
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">jc</code> = Jump if Carry（如果进位标志为 1 则跳转）</li>
+      <li><code class="language-plaintext highlighter-rouge">read_sector</code> 在出错时设置进位标志</li>
+      <li>如果读取失败（比如硬盘不存在），跳转到错误处理</li>
+    </ul>
+  </li>
+</ol>
+
+<hr />
+
+<h3 id="阶段-3打印硬盘标识">阶段 3：打印硬盘标识</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	# Print hd[a-z].
+	call puts
+	.string " hd"
+	mov %dl, %al
+	add $'a' - 0x80, %al
+	call putc
+</code></pre></div></div>
+
+<p><strong>这段代码打印类似 “ hda”、” hdb” 的硬盘名称。</strong></p>
+
+<p><strong>计算过程：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>DL = 0x80（第一个硬盘）
+AL = DL = 0x80
+AL = AL + ('a' - 0x80)
+AL = 0x80 + (0x61 - 0x80)
+AL = 0x80 + (-0x1F)
+AL = 0x61 = 'a'
+</code></pre></div></div>
+
+<p>所以：</p>
+<ul>
+  <li>0x80 → ‘a’（hda）</li>
+  <li>0x81 → ‘b’（hdb）</li>
+  <li>0x82 → ‘c’（hdc）</li>
+  <li>…</li>
+</ul>
+
+<hr />
+
+<h3 id="阶段-4验证-mbr-签名">阶段 4：验证 MBR 签名</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	# Check for MBR signature--if not present, it's not a
+	# partitioned hard disk.
+	cmpw $0xaa55, %es:510
+	jne next_drive
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>检查 MBR 最后两个字节是否为 0xAA55。</p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">cmpw $0xaa55, %es:510</code> 解释：</strong></p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">cmpw</code>：比较字（16 位 / 2 字节）</li>
+  <li><code class="language-plaintext highlighter-rouge">$0xaa55</code>：立即数 0xAA55</li>
+  <li><code class="language-plaintext highlighter-rouge">%es:510</code>：ES 段偏移 510 处的内存（即 0x20000 + 510）</li>
+</ul>
+
+<p><strong>为什么是 0xAA55？</strong></p>
+
+<p>这是 BIOS 定义的”有效引导扇区”签名。如果没有这个签名，说明这不是一个有效的分区表。</p>
+
+<p><strong>字节顺序（小端序）：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>内存地址:  510    511
+内容:      0x55   0xAA
+
+作为 16 位字读取: 0xAA55（低字节在前）
+</code></pre></div></div>
+
+<hr />
+
+<h3 id="阶段-5遍历分区表">阶段 5：遍历分区表</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	mov $446, %si			# Offset of partition table entry 1.
+	mov $'1', %al
+</code></pre></div></div>
+
+<ul>
+  <li>SI = 446，指向第一个分区表项</li>
+  <li>AL = ‘1’，用于打印分区号</li>
+</ul>
+
+<hr />
+
+<h3 id="阶段-6检查每个分区">阶段 6：检查每个分区</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>check_partition:
+	# Is it an unused partition?
+	cmpl $0, %es:(%si)
+	je next_partition
+</code></pre></div></div>
+
+<p>检查分区表项的第一个双字（4 字节）是否为 0。如果是 0，说明这个分区未使用。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	# Print [1-4].
+	call putc
+</code></pre></div></div>
+
+<p>打印当前分区号（’1’、’2’、’3’ 或 ‘4’）。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	# Is it a Pintos kernel partition?
+	cmpb $0x20, %es:4(%si)
+	jne next_partition
+</code></pre></div></div>
+
+<p>检查偏移 4 处的分区类型是否为 0x20（Pintos 内核）。</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">cmpb</code>：比较字节（8 位）</li>
+  <li><code class="language-plaintext highlighter-rouge">%es:4(%si)</code>：ES 段 + SI + 4 处的字节</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	# Is it a bootable partition?
+	cmpb $0x80, %es:(%si)
+	je load_kernel
+</code></pre></div></div>
+
+<p>检查启动标志是否为 0x80（可启动）。如果是，跳转到加载内核的代码。</p>
+
+<p><strong>分区表项内存布局：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>%es:(%si)     → 启动标志（0x80 = 可启动）
+%es:1(%si)    → 起始 CHS
+%es:4(%si)    → 分区类型（0x20 = Pintos）
+%es:8(%si)    → 起始 LBA（4 字节）
+%es:12(%si)   → 扇区数（4 字节）
+</code></pre></div></div>
+
+<hr />
+
+<h3 id="阶段-7移动到下一个分区">阶段 7：移动到下一个分区</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>next_partition:
+	# No match for this partition, go on to the next one.
+	add $16, %si			# Offset to next partition table entry.
+	inc %al
+	cmp $510, %si
+	jb check_partition
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">add $16, %si</code>：每个分区表项 16 字节，移动到下一个</li>
+  <li><code class="language-plaintext highlighter-rouge">inc %al</code>：分区号加 1（’1’ → ‘2’ → ‘3’ → ‘4’）</li>
+  <li><code class="language-plaintext highlighter-rouge">cmp $510, %si</code>：检查是否超过分区表范围
+    <ul>
+      <li>分区表：446 到 509（共 64 字节 = 4 × 16）</li>
+      <li>510 是签名位置</li>
+    </ul>
+  </li>
+  <li><code class="language-plaintext highlighter-rouge">jb</code>：Jump if Below（无符号小于则跳转）</li>
+</ul>
+
+<hr />
+
+<h3 id="阶段-8移动到下一个硬盘">阶段 8：移动到下一个硬盘</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>next_drive:
+	# No match on this drive, go on to the next one.
+	inc %dl
+	jnc read_mbr
+</code></pre></div></div>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">inc %dl</code>：硬盘号加 1（0x80 → 0x81 → …）</li>
+  <li><code class="language-plaintext highlighter-rouge">jnc</code>：Jump if No Carry（如果没有进位则跳转）
+    <ul>
+      <li>当 DL 从 0xFF 变成 0x00 时会产生进位</li>
+      <li>这意味着我们已经检查完所有可能的硬盘号</li>
+    </ul>
+  </li>
+</ul>
+
+<hr />
+
+<h3 id="阶段-9错误处理">阶段 9：错误处理</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>no_such_drive:
+no_boot_partition:
+	# Didn't find a Pintos kernel partition anywhere, give up.
+	call puts
+	.string "\rNot found\r"
+
+	# Notify BIOS that boot failed.  See [IntrList].
+	int $0x18
+</code></pre></div></div>
+
+<p>如果找不到 Pintos 内核分区：</p>
+<ol>
+  <li>打印错误信息 “Not found”</li>
+  <li>调用 INT 18h 通知 BIOS 启动失败</li>
+</ol>
+
+<p><strong>INT 18h 的作用：</strong></p>
+
+<p>告诉 BIOS 当前设备启动失败，BIOS 可能会：</p>
+<ul>
+  <li>尝试从下一个启动设备启动</li>
+  <li>进入 BIOS 设置</li>
+  <li>显示 “No bootable device” 错误</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">\r</code> 的作用：</strong></p>
+
+<p><code class="language-plaintext highlighter-rouge">\r</code> 是回车符（Carriage Return），将光标移动到行首。这样 “Not found” 会覆盖之前打印的 “Pintos hdaX” 等信息。</p>
+
+<hr />
+
+<h2 id="执行流程图">执行流程图</h2>
+
+<pre><code class="language-mermaid">flowchart TD
+    A["DL = 0x80&lt;br/&gt;(第一个硬盘)"] --&gt; B["读取扇区 0 (MBR)"]
+    B --&gt; C{读取成功?}
+    C --&gt;|失败| D[下一硬盘]
+    C --&gt;|成功| E["打印 'hdX'"]
+    E --&gt; F{签名是 0xAA55?}
+    F --&gt;|否| D
+    F --&gt;|是| G["SI = 446&lt;br/&gt;(第一个分区表项)"]
+    G --&gt; H{分区有效?&lt;br/&gt;第一字节 ≠ 0}
+    H --&gt;|否| L[SI += 16&lt;br/&gt;下一分区]
+    H --&gt;|是| I[打印分区号]
+    I --&gt; J{类型是 0x20?&lt;br/&gt;Pintos}
+    J --&gt;|否| L
+    J --&gt;|是| K{可启动 0x80?}
+    K --&gt;|否| L
+    K --&gt;|是| M[/"找到了!&lt;br/&gt;加载内核"/]
+    L --&gt; N{SI &lt; 510?}
+    N --&gt;|是| H
+    N --&gt;|否| D
+    D --&gt; O["DL += 1"]
+    O --&gt; P{还有硬盘?}
+    P --&gt;|是| B
+    P --&gt;|否| Q["'Not found'&lt;br/&gt;INT 18h"]
+</code></pre>
+
+<hr />
+
+<h2 id="实际输出示例">实际输出示例</h2>
+
+<h3 id="成功找到内核">成功找到内核</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Pintos hda1234
+Loading...
+</code></pre></div></div>
+
+<p>表示：</p>
+<ul>
+  <li>检查了 hda（第一个硬盘）</li>
+  <li>检查了分区 1、2、3、4</li>
+  <li>在某个分区找到了内核并开始加载</li>
+</ul>
+
+<h3 id="内核在第二个硬盘">内核在第二个硬盘</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Pintos hda1234 hdb12
+Loading...
+</code></pre></div></div>
+
+<p>表示：</p>
+<ul>
+  <li>hda 的 4 个分区都不是 Pintos 内核</li>
+  <li>在 hdb 的分区 2 找到了内核</li>
+</ul>
+
+<h3 id="未找到内核">未找到内核</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Pintos hda1234 hdb1234
+Not found
+</code></pre></div></div>
+
+<p>表示：</p>
+<ul>
+  <li>检查了所有硬盘和分区</li>
+  <li>没有找到 Pintos 内核分区</li>
+</ul>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-为什么只支持-4-个分区">Q1: 为什么只支持 4 个分区？</h3>
+
+<p>MBR 分区表只有 64 字节空间，每个分区表项 16 字节，所以最多只能有 4 个<strong>主分区</strong>。</p>
+
+<p>如果需要更多分区，可以使用<strong>扩展分区</strong>，但 Pintos 的引导加载程序不支持。</p>
+
+<h3 id="q2-为什么使用-0x20-作为-pintos-分区类型">Q2: 为什么使用 0x20 作为 Pintos 分区类型？</h3>
+
+<p>0x20 是一个未被主流操作系统使用的分区类型码。Pintos 选择它来标识自己的内核分区，避免与其他系统冲突。</p>
+
+<h3 id="q3-如果有多个-pintos-分区会怎样">Q3: 如果有多个 Pintos 分区会怎样？</h3>
+
+<p>代码会使用找到的第一个<strong>可启动的</strong> Pintos 分区（启动标志为 0x80）。</p>
+
+<h3 id="q4-chs-和-lba-有什么区别">Q4: CHS 和 LBA 有什么区别？</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>寻址方式</th>
+      <th>全称</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>CHS</td>
+      <td>Cylinder-Head-Sector</td>
+      <td>旧式寻址，限制约 8GB</td>
+    </tr>
+    <tr>
+      <td>LBA</td>
+      <td>Logical Block Addressing</td>
+      <td>现代寻址，支持大硬盘</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Pintos 使用 LBA 寻址，通过 BIOS 扩展读取功能（INT 13h, AH=42h）。</p>
+
+<hr />
+
+<h2 id="调试技巧">调试技巧</h2>
+
+<h3 id="查看-mbr-内容">查看 MBR 内容</h3>
+
+<p>在 Linux 中可以用以下命令查看硬盘的 MBR：</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>xxd <span class="nt">-l</span> 512 /dev/sda
+</code></pre></div></div>
+
+<h3 id="查看分区表">查看分区表</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>fdisk <span class="nt">-l</span> /dev/sda
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果启动标志检查被删除（不检查 0x80），会有什么影响？</p>
+  </li>
+  <li>
+    <p>为什么要先检查分区是否有效（第一字节不为 0），再检查分区类型？</p>
+  </li>
+  <li>
+    <p>如果要支持超过 4 个主分区，需要如何修改代码？</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="下一部分">下一部分</h2>
+
+<p>找到 Pintos 内核分区后，接下来要将内核加载到内存。请参阅下一篇文章。</p>

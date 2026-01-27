@@ -1,0 +1,522 @@
+<h2 id="概述">概述</h2>
+
+<p><code class="language-plaintext highlighter-rouge">puts</code> 是一个非常巧妙的字符串打印函数。它的独特之处在于：字符串不是通过参数传递，而是直接跟在 <code class="language-plaintext highlighter-rouge">call</code> 指令后面。这种设计极大地节省了代码空间。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#### Print string subroutine.  To save space in the loader, this
+#### subroutine takes its null-terminated string argument from the
+#### code stream just after the call, and then returns to the byte
+#### just after the terminating null.  This subroutine preserves all
+#### general-purpose registers.
+
+puts:	xchg %si, %ss:(%esp)
+	push %ax
+next_char:
+	mov %cs:(%si), %al
+	inc %si
+	test %al, %al
+	jz 1f
+	call putc
+	jmp next_char
+1:	pop %ax
+	xchg %si, %ss:(%esp)
+	ret
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="调用方式">调用方式</h2>
+
+<p>普通的字符串打印函数通常这样调用：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># 传统方式（需要额外存储字符串地址）
+mov $string_addr, %si
+call print_string
+...
+string_addr: .string "Hello"
+</code></pre></div></div>
+
+<p>但 Pintos 的 <code class="language-plaintext highlighter-rouge">puts</code> 这样调用：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># Pintos 方式（字符串紧跟在 call 后面）
+call puts
+.string "Hello"
+# 执行完后，直接从这里继续
+</code></pre></div></div>
+
+<p><strong>优势：</strong></p>
+<ul>
+  <li>不需要单独存储字符串地址</li>
+  <li>代码更紧凑</li>
+  <li>字符串和调用点在一起，更易读</li>
+</ul>
+
+<hr />
+
+<h2 id="前置知识">前置知识</h2>
+
+<h3 id="call-指令的工作原理">call 指令的工作原理</h3>
+
+<p>当执行 <code class="language-plaintext highlighter-rouge">call puts</code> 时：</p>
+
+<ol>
+  <li><strong>压栈返回地址</strong>：将下一条指令的地址压入栈</li>
+  <li><strong>跳转</strong>：跳转到 <code class="language-plaintext highlighter-rouge">puts</code> 函数</li>
+</ol>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>执行前:                      执行 call 后:
+                             
+代码:                        栈:
+┌─────────────┐              ┌─────────────┐
+│ call puts   │              │ 返回地址    │ ← ESP
+├─────────────┤ ← 返回地址   ├─────────────┤
+│ "Hello"     │              │   ...       │
+├─────────────┤              └─────────────┘
+│ 下一指令    │              
+└─────────────┘              
+</code></pre></div></div>
+
+<p><strong>关键点</strong>：返回地址指向的是<strong>字符串的开始</strong>，不是下一条真正的指令！</p>
+
+<h3 id="栈帧结构">栈帧结构</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        高地址
+   ┌─────────────┐
+   │    ...      │
+   ├─────────────┤
+   │  返回地址   │ ← ESP 指向这里（SS:ESP）
+   └─────────────┘
+        低地址
+</code></pre></div></div>
+
+<h3 id="xchg-指令">xchg 指令</h3>
+
+<p><code class="language-plaintext highlighter-rouge">xchg</code> 指令交换两个操作数的值：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>xchg %si, %ss:(%esp)
+# 等价于:
+temp = %si
+%si = [SS:ESP]
+[SS:ESP] = temp
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="逐行详解">逐行详解</h2>
+
+<h3 id="第-1-行获取字符串地址">第 1 行：获取字符串地址</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>puts:	xchg %si, %ss:(%esp)
+</code></pre></div></div>
+
+<p><strong>这做了什么？</strong></p>
+
+<p>交换 SI 寄存器和栈顶的值（返回地址）。</p>
+
+<p><strong>执行前：</strong></p>
+<ul>
+  <li>SI = 某个值（需要保存）</li>
+  <li>[SS:ESP] = 返回地址（指向字符串）</li>
+</ul>
+
+<p><strong>执行后：</strong></p>
+<ul>
+  <li>SI = 返回地址（现在指向字符串）</li>
+  <li>[SS:ESP] = 原来的 SI 值（已保存）</li>
+</ul>
+
+<p><strong>为什么用 xchg？</strong></p>
+
+<p>一石二鸟：</p>
+<ol>
+  <li>把返回地址（字符串地址）加载到 SI</li>
+  <li>同时保存原来的 SI 值（放到栈上）</li>
+</ol>
+
+<p><strong>为什么是 <code class="language-plaintext highlighter-rouge">%ss:(%esp)</code> 而不是 <code class="language-plaintext highlighter-rouge">(%esp)</code>？</strong></p>
+
+<p>在实模式下，默认栈操作使用 SS 段。为了明确和安全，显式写出 <code class="language-plaintext highlighter-rouge">%ss:</code>。</p>
+
+<hr />
+
+<h3 id="第-2-行保存-ax">第 2 行：保存 AX</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	push %ax
+</code></pre></div></div>
+
+<p>保存 AX 寄存器，因为后面要用它来处理字符。函数承诺”保留所有通用寄存器”。</p>
+
+<p><strong>栈状态：</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>   ┌─────────────┐
+   │ 原来的 AX   │ ← ESP
+   ├─────────────┤
+   │ 原来的 SI   │
+   └─────────────┘
+</code></pre></div></div>
+
+<hr />
+
+<h3 id="第-3-4-行读取字符">第 3-4 行：读取字符</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>next_char:
+	mov %cs:(%si), %al
+	inc %si
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">mov %cs:(%si), %al</code></strong>：</p>
+<ul>
+  <li>从 CS:SI 地址读取一个字节</li>
+  <li>存入 AL 寄存器</li>
+</ul>
+
+<p><strong>为什么用 CS 段？</strong></p>
+
+<p>字符串在代码中（紧跟 <code class="language-plaintext highlighter-rouge">call</code> 指令后），所以在代码段（CS）内。</p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">inc %si</code></strong>：</p>
+<ul>
+  <li>SI 加 1，指向下一个字符</li>
+</ul>
+
+<hr />
+
+<h3 id="第-5-6-行检查字符串结束">第 5-6 行：检查字符串结束</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	test %al, %al
+	jz 1f
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">test %al, %al</code></strong>：</p>
+<ul>
+  <li>执行 AL AND AL</li>
+  <li>只设置标志位，不保存结果</li>
+  <li>如果 AL = 0，零标志 ZF = 1</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">jz 1f</code></strong>：</p>
+<ul>
+  <li>Jump if Zero：如果 ZF = 1，跳转到标签 <code class="language-plaintext highlighter-rouge">1:</code></li>
+  <li><code class="language-plaintext highlighter-rouge">1f</code> 表示向前（forward）找标签 <code class="language-plaintext highlighter-rouge">1</code></li>
+  <li>遇到 null 终止符时结束循环</li>
+</ul>
+
+<p><strong>为什么用 <code class="language-plaintext highlighter-rouge">test</code> 而不是 <code class="language-plaintext highlighter-rouge">cmp $0, %al</code>？</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>指令</th>
+      <th>机器码</th>
+      <th>字节数</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">test %al, %al</code></td>
+      <td>84 C0</td>
+      <td>2</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">cmp $0, %al</code></td>
+      <td>3C 00</td>
+      <td>2</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>字节数相同，但 <code class="language-plaintext highlighter-rouge">test</code> 是更常见的惯用法。</p>
+
+<hr />
+
+<h3 id="第-7-8-行打印字符并循环">第 7-8 行：打印字符并循环</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	call putc
+	jmp next_char
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">call putc</code></strong>：调用字符打印函数（稍后详解）</p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">jmp next_char</code></strong>：跳回循环开始，处理下一个字符</p>
+
+<hr />
+
+<h3 id="第-9-10-行恢复寄存器">第 9-10 行：恢复寄存器</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>1:	pop %ax
+	xchg %si, %ss:(%esp)
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">pop %ax</code></strong>：恢复原来的 AX 值</p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">xchg %si, %ss:(%esp)</code></strong>：</p>
+<ul>
+  <li>交换 SI 和栈顶的值</li>
+  <li>SI 恢复为原来的值</li>
+  <li>栈顶变成新的返回地址（字符串结束后的位置）</li>
+</ul>
+
+<p><strong>这是关键！</strong> 现在栈顶的返回地址指向字符串的 null 终止符之后——也就是真正的下一条指令。</p>
+
+<hr />
+
+<h3 id="第-11-行返回">第 11 行：返回</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	ret
+</code></pre></div></div>
+
+<p>从栈中弹出返回地址并跳转。由于栈顶已经被更新为字符串之后的地址，所以会正确返回到调用者的下一条指令。</p>
+
+<hr />
+
+<h2 id="执行过程详解">执行过程详解</h2>
+
+<p>假设有以下代码：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        call puts
+msg:    .string "Hi"
+next:   mov $1, %ax
+</code></pre></div></div>
+
+<h3 id="步骤-1执行-call-puts">步骤 1：执行 call puts</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>代码布局:
+地址    内容
+0x100   call puts       (E8 xx xx)
+0x103   'H'             (48)
+0x104   'i'             (69)
+0x105   '\0'            (00)
+0x106   mov $1, %ax     (下一指令)
+
+栈: [0x103]  ← 返回地址指向 'H'
+</code></pre></div></div>
+
+<h3 id="步骤-2xchg-si-ssesp">步骤 2：xchg %si, %ss:(%esp)</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>SI = 0x103 (字符串地址)
+栈: [原SI值]
+</code></pre></div></div>
+
+<h3 id="步骤-3push-ax">步骤 3：push %ax</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>栈: [原AX值]
+    [原SI值]
+</code></pre></div></div>
+
+<h3 id="步骤-4-8打印循环">步骤 4-8：打印循环</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>迭代 1: 读取 'H' (0x103), 打印, SI = 0x104
+迭代 2: 读取 'i' (0x104), 打印, SI = 0x105
+迭代 3: 读取 '\0' (0x105), 发现是 0, 跳出循环
+</code></pre></div></div>
+
+<h3 id="步骤-9pop-ax">步骤 9：pop %ax</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>AX = 原来的值
+栈: [原SI值]
+</code></pre></div></div>
+
+<h3 id="步骤-10xchg-si-ssesp">步骤 10：xchg %si, %ss:(%esp)</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>SI = 原来的值
+栈: [0x106]  ← 现在指向 'mov $1, %ax'
+</code></pre></div></div>
+
+<h3 id="步骤-11ret">步骤 11：ret</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>跳转到 0x106, 执行 mov $1, %ax
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="图解执行流程">图解执行流程</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>                    调用前                执行 puts 中              返回后
+                    
+代码:               
+┌─────────────┐     
+│ call puts   │──────────────────────────────────────────────────┐
+├─────────────┤                                                  │
+│ 'H'         │◄──── SI 从这里开始 ──────────────────────────────│
+├─────────────┤                     │                            │
+│ 'i'         │                     │ 逐字符读取并打印           │
+├─────────────┤                     │                            │
+│ '\0'        │                     ▼                            │
+├─────────────┤◄──── SI 结束在这里 ─────────────────────────────│
+│ mov $1, %ax │──────────────────────────────────────────────────┘
+└─────────────┘          ▲                            返回到这里
+                         │
+                         └── SI 最终指向这里
+                              (null 之后)
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="为什么这样设计">为什么这样设计？</h2>
+
+<h3 id="传统方法的问题">传统方法的问题</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># 方法 1：用寄存器传递地址
+    mov $msg, %si
+    call print_string
+    ...
+msg: .string "Hello"
+
+# 问题：
+# - 需要额外的 mov 指令
+# - 字符串远离调用点，不直观
+</code></pre></div></div>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># 方法 2：用栈传递地址
+    push $msg
+    call print_string
+    add $2, %sp         # 清理栈
+    ...
+msg: .string "Hello"
+
+# 问题：
+# - 需要 push 和清理栈
+# - 更多字节
+</code></pre></div></div>
+
+<h3 id="pintos-方法的优势">Pintos 方法的优势</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    call puts
+    .string "Hello"
+    # 自动从这里继续
+
+# 优势：
+# - 最少的字节数
+# - 字符串紧跟调用，直观
+# - 不需要清理
+</code></pre></div></div>
+
+<p><strong>节省的空间：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>方法</th>
+      <th>字节数</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>传统方法</td>
+      <td>5-8 字节</td>
+    </tr>
+    <tr>
+      <td>Pintos 方法</td>
+      <td>仅 call 的 3 字节</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-为什么要保存所有寄存器">Q1: 为什么要保存所有寄存器？</h3>
+
+<p>调用者不知道 <code class="language-plaintext highlighter-rouge">puts</code> 会修改哪些寄存器。为了安全，<code class="language-plaintext highlighter-rouge">puts</code> 保证不破坏任何通用寄存器的值。这样调用者可以放心使用。</p>
+
+<h3 id="q2-如果字符串中有-0-会怎样">Q2: 如果字符串中有 ‘\0’ 会怎样？</h3>
+
+<p>字符串会在第一个 ‘\0’ 处截断。这是 C 语言的标准行为（null 终止字符串）。</p>
+
+<h3 id="q3-xchg-指令是原子的吗">Q3: xchg 指令是原子的吗？</h3>
+
+<p>在单处理器系统上，xchg 指令是原子的。在多处理器系统上，xchg 访问内存时会自动加锁。但在引导阶段，只有一个处理器在运行，所以这不是问题。</p>
+
+<h3 id="q4-为什么用-cssi-而不是-si">Q4: 为什么用 <code class="language-plaintext highlighter-rouge">%cs:(%si)</code> 而不是 <code class="language-plaintext highlighter-rouge">(%si)</code>？</h3>
+
+<p>在实模式下，不同的段有不同的用途：</p>
+<ul>
+  <li>CS：代码段</li>
+  <li>DS：数据段</li>
+  <li>SS：栈段</li>
+</ul>
+
+<p>字符串在代码中，所以必须用 CS 段来访问。如果用 DS（默认），可能指向错误的位置。</p>
+
+<h3 id="q5-这种技术有名字吗">Q5: 这种技术有名字吗？</h3>
+
+<p>这种技术有时被称为 <strong>“inline string”</strong> 或 <strong>“embedded string”</strong> 技术。它在早期的汇编程序和引导加载程序中很常见。</p>
+
+<hr />
+
+<h2 id="类似技术的现代应用">类似技术的现代应用</h2>
+
+<p>虽然这种技术现在不常见，但类似的思想在其他地方出现：</p>
+
+<h3 id="position-independent-code-pic">Position-Independent Code (PIC)</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>call get_ip
+get_ip:
+    pop %ebx        # EBX = 当前指令地址
+</code></pre></div></div>
+
+<p>这种技术用于获取当前代码的地址，用于位置无关代码。</p>
+
+<h3 id="arm-的-pc-relative-寻址">ARM 的 PC-relative 寻址</h3>
+
+<p>ARM 处理器有专门的指令从相对 PC 的位置加载数据，类似的思想。</p>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果不使用 <code class="language-plaintext highlighter-rouge">xchg</code>，需要多少条指令来实现相同的功能？</p>
+  </li>
+  <li>
+    <p>为什么 <code class="language-plaintext highlighter-rouge">push %ax</code> 在 <code class="language-plaintext highlighter-rouge">xchg</code> 之后而不是之前？</p>
+  </li>
+  <li>
+    <p>如果在字符串中间有 <code class="language-plaintext highlighter-rouge">\0</code>，如 <code class="language-plaintext highlighter-rouge">.string "Hel\0lo"</code>，会打印什么？</p>
+  </li>
+  <li>
+    <p>这种技术在 32 位或 64 位模式下是否还有效？需要什么修改？</p>
+  </li>
+  <li>
+    <p>如果 <code class="language-plaintext highlighter-rouge">puts</code> 函数本身需要调用其他函数，栈的变化会如何？</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="代码复习">代码复习</h2>
+
+<p>完整的 <code class="language-plaintext highlighter-rouge">puts</code> 函数，带详细注释：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># 打印 null 终止的字符串
+# 字符串紧跟在 call 指令后面
+# 保留所有通用寄存器
+
+puts:
+    xchg %si, %ss:(%esp)    # SI ← 返回地址（字符串）
+                             # 同时保存原 SI
+    push %ax                 # 保存 AX
+
+next_char:
+    mov %cs:(%si), %al       # AL ← 下一个字符
+    inc %si                  # SI 前进
+    test %al, %al            # 是否为 null？
+    jz 1f                    # 是，退出循环
+    call putc                # 打印字符
+    jmp next_char            # 继续
+
+1:  pop %ax                  # 恢复 AX
+    xchg %si, %ss:(%esp)     # 恢复 SI
+                             # 返回地址 ← SI（字符串之后）
+    ret                      # 返回到字符串之后
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="下一部分">下一部分</h2>
+
+<p><code class="language-plaintext highlighter-rouge">puts</code> 函数调用 <code class="language-plaintext highlighter-rouge">putc</code> 来打印单个字符。接下来我们分析 <code class="language-plaintext highlighter-rouge">putc</code> 函数。请参阅下一篇文章。</p>

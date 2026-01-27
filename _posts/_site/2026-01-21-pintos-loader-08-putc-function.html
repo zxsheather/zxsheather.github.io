@@ -1,0 +1,654 @@
+<h2 id="概述">概述</h2>
+
+<p><code class="language-plaintext highlighter-rouge">putc</code> 函数负责将单个字符输出到两个目标：VGA 显示器和串口。它包含一些有趣的技巧，比如自修改代码和自动换行处理。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#### Character output subroutine.  Prints the character in AL to the
+#### VGA display and serial port 0, using BIOS services (see
+#### [IntrList]).  Preserves all general-purpose registers.
+####
+#### If called upon to output a carriage return, this subroutine
+#### automatically supplies the following line feed.
+
+putc:	pusha
+
+1:	sub %bh, %bh			# Page 0.
+	mov $0x0e, %ah			# Teletype output service.
+	int $0x10
+
+	mov $0x01, %ah			# Serial port output service.
+	sub %dx, %dx			# Serial port 0.
+2:	int $0x14			# Destroys AH.
+	test $0x80, %ah			# Output timed out?
+	jz 3f
+	movw $0x9090, 2b		# Turn "int $0x14" above into NOPs.
+
+3:
+	cmp $'\r', %al
+	jne popa_ret
+	mov $'\n', %al
+	jmp 1b
+
+popa_ret:
+	popa
+	ret				# Error code still in CF
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="前置知识">前置知识</h2>
+
+<h3 id="vga-文本模式">VGA 文本模式</h3>
+
+<p>在文本模式下，VGA 可以显示 80×25 的字符网格。BIOS 提供了简单的输出服务。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>┌────────────────────────────────────────┐
+│ 行 0:  Hello, Pintos!                  │
+│ 行 1:  Loading...                      │
+│ 行 2:                                  │
+│ ...                                    │
+│ 行 24:                                 │
+└────────────────────────────────────────┘
+      80 列
+</code></pre></div></div>
+
+<h3 id="bios-视频服务int-10h">BIOS 视频服务（INT 10h）</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>AH 值</th>
+      <th>功能</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0x00</td>
+      <td>设置视频模式</td>
+    </tr>
+    <tr>
+      <td>0x02</td>
+      <td>设置光标位置</td>
+    </tr>
+    <tr>
+      <td>0x03</td>
+      <td>获取光标位置</td>
+    </tr>
+    <tr>
+      <td>0x0E</td>
+      <td><strong>Teletype 输出</strong>（我们使用这个）</td>
+    </tr>
+    <tr>
+      <td>0x13</td>
+      <td>写字符串</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="bios-串口服务int-14h">BIOS 串口服务（INT 14h）</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>AH 值</th>
+      <th>功能</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0x00</td>
+      <td>初始化串口</td>
+    </tr>
+    <tr>
+      <td>0x01</td>
+      <td><strong>发送字符</strong>（我们使用这个）</td>
+    </tr>
+    <tr>
+      <td>0x02</td>
+      <td>接收字符</td>
+    </tr>
+    <tr>
+      <td>0x03</td>
+      <td>获取状态</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="什么是自修改代码">什么是自修改代码？</h3>
+
+<p>自修改代码是指程序在运行时修改自己的机器码。这是一种古老但有效的技术，可以：</p>
+<ul>
+  <li>优化性能</li>
+  <li>节省空间</li>
+  <li>实现特殊功能</li>
+</ul>
+
+<p>在现代系统中通常避免使用（安全原因），但在引导加载程序中仍然有用。</p>
+
+<hr />
+
+<h2 id="逐行详解">逐行详解</h2>
+
+<h3 id="第-1-行保存所有寄存器">第 1 行：保存所有寄存器</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>putc:	pusha
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">pusha</code>（Push All）将所有 8 个通用寄存器压入栈：</p>
+<ul>
+  <li>顺序：AX, CX, DX, BX, SP, BP, SI, DI</li>
+  <li>共 16 字节</li>
+</ul>
+
+<p><strong>为什么保存所有寄存器？</strong></p>
+
+<ul>
+  <li>BIOS 中断可能修改任何寄存器</li>
+  <li>调用者期望寄存器不变</li>
+  <li><code class="language-plaintext highlighter-rouge">pusha</code> 比单独 push 每个寄存器更节省空间</li>
+</ul>
+
+<hr />
+
+<h3 id="第-2-4-行vga-输出">第 2-4 行：VGA 输出</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>1:	sub %bh, %bh			# Page 0.
+	mov $0x0e, %ah			# Teletype output service.
+	int $0x10
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">sub %bh, %bh</code></strong>：</p>
+<ul>
+  <li>BH = 0，选择视频页面 0</li>
+  <li>VGA 可以有多个页面，但我们只用第一个</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">mov $0x0e, %ah</code></strong>：</p>
+<ul>
+  <li>AH = 0x0E，选择 “Teletype output” 服务</li>
+  <li>这个服务会自动处理光标移动和滚动</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">int $0x10</code></strong>：</p>
+<ul>
+  <li>调用 BIOS 视频服务</li>
+  <li>AL 中的字符被显示在当前光标位置</li>
+  <li>光标自动前进</li>
+</ul>
+
+<p><strong>INT 10h, AH=0Eh 的参数：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>寄存器</th>
+      <th>内容</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AH</td>
+      <td>0x0E（功能号）</td>
+    </tr>
+    <tr>
+      <td>AL</td>
+      <td>要显示的字符</td>
+    </tr>
+    <tr>
+      <td>BH</td>
+      <td>页面号（通常 0）</td>
+    </tr>
+    <tr>
+      <td>BL</td>
+      <td>前景色（图形模式下使用）</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Teletype 输出的特点：</strong></p>
+<ul>
+  <li>自动处理 <code class="language-plaintext highlighter-rouge">\r</code>（回车）、<code class="language-plaintext highlighter-rouge">\n</code>（换行）、<code class="language-plaintext highlighter-rouge">\b</code>（退格）</li>
+  <li>自动滚动屏幕</li>
+  <li>自动换行</li>
+</ul>
+
+<hr />
+
+<h3 id="第-5-7-行串口输出">第 5-7 行：串口输出</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	mov $0x01, %ah			# Serial port output service.
+	sub %dx, %dx			# Serial port 0.
+2:	int $0x14			# Destroys AH.
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">mov $0x01, %ah</code></strong>：</p>
+<ul>
+  <li>AH = 0x01，选择 “发送字符” 服务</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">sub %dx, %dx</code></strong>：</p>
+<ul>
+  <li>DX = 0，选择串口 0（COM1）</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">2:</code></strong>：</p>
+<ul>
+  <li>这是一个局部标签，用于后面的自修改代码</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">int $0x14</code></strong>：</p>
+<ul>
+  <li>调用 BIOS 串口服务</li>
+  <li>将 AL 中的字符发送到串口</li>
+</ul>
+
+<p><strong>INT 14h, AH=01h 的参数：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>寄存器</th>
+      <th>内容</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AH</td>
+      <td>0x01（功能号）</td>
+    </tr>
+    <tr>
+      <td>AL</td>
+      <td>要发送的字符</td>
+    </tr>
+    <tr>
+      <td>DX</td>
+      <td>串口号（0-3）</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>返回值：</strong></p>
+<ul>
+  <li>AH 的位 7 如果为 1，表示超时错误</li>
+</ul>
+
+<hr />
+
+<h3 id="第-8-10-行超时处理和自修改代码">第 8-10 行：超时处理和自修改代码</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	test $0x80, %ah			# Output timed out?
+	jz 3f
+	movw $0x9090, 2b		# Turn "int $0x14" above into NOPs.
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">test $0x80, %ah</code></strong>：</p>
+<ul>
+  <li>测试 AH 的位 7</li>
+  <li>如果位 7 = 1，表示串口输出超时</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">jz 3f</code></strong>：</p>
+<ul>
+  <li>如果没有超时（位 7 = 0），跳到标签 3 继续</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">movw $0x9090, 2b</code></strong>：</p>
+<ul>
+  <li>这是<strong>自修改代码</strong>！</li>
+  <li>将 0x9090 写入标签 <code class="language-plaintext highlighter-rouge">2:</code> 的位置</li>
+  <li>0x90 是 NOP（No Operation）指令的操作码</li>
+  <li>0x9090 = 两个 NOP，刚好覆盖 <code class="language-plaintext highlighter-rouge">int $0x14</code>（CD 14，2 字节）</li>
+</ul>
+
+<p><strong>自修改代码详解：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>修改前:                修改后:
+2: int $0x14          2: nop
+   (CD 14)               nop
+                         (90 90)
+</code></pre></div></div>
+
+<p><strong>为什么要这样做？</strong></p>
+
+<p>如果串口不存在或故障，每次尝试输出都会超时。通过把 <code class="language-plaintext highlighter-rouge">int $0x14</code> 改成 NOP：</p>
+<ul>
+  <li>后续调用不再尝试串口输出</li>
+  <li>避免反复超时等待</li>
+  <li>大大加快输出速度</li>
+</ul>
+
+<p><strong>这安全吗？</strong></p>
+
+<p>在引导加载程序环境中是安全的：</p>
+<ul>
+  <li>单处理器</li>
+  <li>代码在 RAM 中（不是 ROM）</li>
+  <li>没有代码签名或保护</li>
+</ul>
+
+<hr />
+
+<h3 id="第-11-15-行自动换行处理">第 11-15 行：自动换行处理</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>3:
+	cmp $'\r', %al
+	jne popa_ret
+	mov $'\n', %al
+	jmp 1b
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">cmp $'\r', %al</code></strong>：</p>
+<ul>
+  <li>比较 AL 和回车符（0x0D）</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">jne popa_ret</code></strong>：</p>
+<ul>
+  <li>如果不是回车符，跳到结束</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">mov $'\n', %al</code> 和 <code class="language-plaintext highlighter-rouge">jmp 1b</code></strong>：</p>
+<ul>
+  <li>如果是回车符，追加一个换行符</li>
+  <li>跳回标签 1，再次执行输出</li>
+</ul>
+
+<p><strong>为什么要这样做？</strong></p>
+
+<p>不同系统使用不同的行结束符：</p>
+<ul>
+  <li>Unix/Linux: <code class="language-plaintext highlighter-rouge">\n</code>（LF，换行）</li>
+  <li>Mac (旧): <code class="language-plaintext highlighter-rouge">\r</code>（CR，回车）</li>
+  <li>Windows: <code class="language-plaintext highlighter-rouge">\r\n</code>（CRLF）</li>
+</ul>
+
+<p>通过自动在 <code class="language-plaintext highlighter-rouge">\r</code> 后添加 <code class="language-plaintext highlighter-rouge">\n</code>，确保在各种终端上都能正确换行。</p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">\r</code> 和 <code class="language-plaintext highlighter-rouge">\n</code> 的区别：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>\r (回车): 光标移到行首
+\n (换行): 光标移到下一行
+
+单独 \r:        单独 \n:        \r\n 组合:
+Hello           Hello           Hello
+World           Hello           World
+     ^World         ^
+     光标在 W       World 覆盖了 Hello
+</code></pre></div></div>
+
+<hr />
+
+<h3 id="第-16-18-行返回">第 16-18 行：返回</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>popa_ret:
+	popa
+	ret				# Error code still in CF
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">popa</code></strong>：</p>
+<ul>
+  <li>恢复之前保存的所有寄存器</li>
+  <li>顺序相反：DI, SI, BP, (跳过 SP), BX, DX, CX, AX</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">ret</code></strong>：</p>
+<ul>
+  <li>返回调用者</li>
+</ul>
+
+<p><strong>“Error code still in CF” 注释：</strong></p>
+
+<p><code class="language-plaintext highlighter-rouge">popa</code> 和 <code class="language-plaintext highlighter-rouge">ret</code> 都不会修改标志寄存器。如果之前的操作设置了进位标志（如磁盘读取失败），它仍然保持。这个标签被 <code class="language-plaintext highlighter-rouge">read_sector</code> 函数共享使用。</p>
+
+<hr />
+
+<h2 id="执行流程图">执行流程图</h2>
+
+<pre><code class="language-mermaid">flowchart TD
+    A["putc: 保存寄存器&lt;br/&gt;(pusha)"] --&gt; B["VGA 输出&lt;br/&gt;(INT 10h)"]
+    B --&gt; C["串口输出&lt;br/&gt;(INT 14h)"]
+    C --&gt; D{超时?}
+    D --&gt;|否| F{是回车 '\\r'?}
+    D --&gt;|是| E["自修改代码&lt;br/&gt;禁用串口输出"]
+    E --&gt; F
+    F --&gt;|否| G["恢复寄存器&lt;br/&gt;(popa)"]
+    F --&gt;|是| H["AL = '\\n'&lt;br/&gt;再输出一次"]
+    H --&gt; B
+    G --&gt; I[ret]
+</code></pre>
+
+<hr />
+
+<h2 id="自修改代码深入分析">自修改代码深入分析</h2>
+
+<h3 id="机器码变化">机器码变化</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>原始代码:
+地址    机器码    汇编
+0x...   CD 14     int $0x14
+
+修改后:
+地址    机器码    汇编
+0x...   90 90     nop; nop
+</code></pre></div></div>
+
+<h3 id="为什么用两个-nop">为什么用两个 NOP？</h3>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">int $0x14</code> 是 2 字节指令（CD 14）</li>
+  <li>需要用 2 字节来覆盖</li>
+  <li>90 是单字节 NOP 指令</li>
+  <li>所以用两个 NOP (90 90)</li>
+</ul>
+
+<h3 id="自修改代码的风险">自修改代码的风险</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>风险</th>
+      <th>说明</th>
+      <th>在这里是否适用？</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>多核同步问题</td>
+      <td>其他核可能执行旧代码</td>
+      <td>否（单核引导）</td>
+    </tr>
+    <tr>
+      <td>指令缓存问题</td>
+      <td>CPU 缓存可能有旧指令</td>
+      <td>可能，但 8086/8088 无缓存</td>
+    </tr>
+    <tr>
+      <td>安全问题</td>
+      <td>可被恶意利用</td>
+      <td>否（引导代码不受保护）</td>
+    </tr>
+    <tr>
+      <td>可维护性差</td>
+      <td>代码难以理解</td>
+      <td>是，但空间受限时值得</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="双输出的好处">双输出的好处</h2>
+
+<p>同时输出到 VGA 和串口有多个好处：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>┌─────────────────────────────────────────────────────────┐
+│                        计算机                          │
+│  ┌─────────────┐                    ┌─────────────┐   │
+│  │   CPU       │                    │   串口      │───┼──► 调试终端
+│  │   运行      │ ──────────────────►│   COM1      │   │
+│  │   putc      │        │           └─────────────┘   │
+│  └─────────────┘        │                              │
+│                         ▼           ┌─────────────┐   │
+│                    ┌─────────────┐  │   显示器    │   │
+│                    │   VGA       │──┤             │   │
+│                    │   控制器    │  └─────────────┘   │
+│                    └─────────────┘                     │
+└─────────────────────────────────────────────────────────┘
+</code></pre></div></div>
+
+<p><strong>使用场景：</strong></p>
+
+<ol>
+  <li><strong>本地调试</strong>：直接看显示器</li>
+  <li><strong>远程调试</strong>：通过串口连接另一台电脑</li>
+  <li><strong>日志记录</strong>：串口输出可以重定向到文件</li>
+  <li><strong>无头服务器</strong>：没有显示器时用串口</li>
+</ol>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-如果-vga-也出错怎么办">Q1: 如果 VGA 也出错怎么办？</h3>
+
+<p>代码没有检查 VGA 输出错误。通常 VGA 输出不会失败（除非硬件彻底坏了）。</p>
+
+<h3 id="q2-为什么不用更高级的-vga-函数">Q2: 为什么不用更高级的 VGA 函数？</h3>
+
+<p>INT 10h AH=0Eh（Teletype）是最简单、最兼容的选择。更高级的函数可能需要更多参数或不是所有 BIOS 都支持。</p>
+
+<h3 id="q3-串口禁用后能重新启用吗">Q3: 串口禁用后能重新启用吗？</h3>
+
+<p>不能。自修改代码永久地将 <code class="language-plaintext highlighter-rouge">int $0x14</code> 改成了 NOP。要重新启用，需要重新启动。</p>
+
+<h3 id="q4-为什么把标签放在-int-0x14-之前">Q4: 为什么把标签放在 <code class="language-plaintext highlighter-rouge">int $0x14</code> 之前？</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>2:	int $0x14           # 标签 2 在这
+	test $0x80, %ah
+	...
+	movw $0x9090, 2b    # 修改标签 2 处的代码
+</code></pre></div></div>
+
+<p>标签必须精确地指向要修改的指令。<code class="language-plaintext highlighter-rouge">2b</code> 表示”向后（backward）找标签 2”。</p>
+
+<h3 id="q5-popa-为什么不恢复-sp">Q5: popa 为什么不恢复 SP？</h3>
+
+<p><code class="language-plaintext highlighter-rouge">popa</code> 会跳过 SP 的恢复，因为：</p>
+<ul>
+  <li>SP 在 pusha/popa 期间一直在变化</li>
+  <li>恢复 pusha 时的 SP 值会导致栈混乱</li>
+  <li>x86 的设计就是这样</li>
+</ul>
+
+<hr />
+
+<h2 id="性能分析">性能分析</h2>
+
+<h3 id="超时的代价">超时的代价</h3>
+
+<p>如果串口每次都超时：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>每个字符:
+- VGA 输出: ~微秒级
+- 串口超时: ~毫秒级（取决于 BIOS）
+
+假设 1000 个字符:
+- 没有超时: ~秒级完成
+- 每次超时: 可能需要几秒
+</code></pre></div></div>
+
+<p>通过自修改代码禁用串口后，性能回到正常水平。</p>
+
+<h3 id="空间效率">空间效率</h3>
+
+<p><code class="language-plaintext highlighter-rouge">pusha/popa</code> vs 单独 push/pop：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>方法</th>
+      <th>指令</th>
+      <th>字节数</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>pusha</td>
+      <td>1 条</td>
+      <td>1 字节</td>
+    </tr>
+    <tr>
+      <td>8 个 push</td>
+      <td>8 条</td>
+      <td>8 字节</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>节省 7 字节！</p>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果要支持不同颜色的文本输出，需要如何修改代码？</p>
+  </li>
+  <li>
+    <p>自修改代码在现代 CPU 上可能有什么问题？（提示：考虑指令缓存）</p>
+  </li>
+  <li>
+    <p>为什么 <code class="language-plaintext highlighter-rouge">\r</code> 后面自动加 <code class="language-plaintext highlighter-rouge">\n</code>，而不是在源代码中直接写 <code class="language-plaintext highlighter-rouge">\r\n</code>？</p>
+  </li>
+  <li>
+    <p>如果串口输出成功后又开始超时，会发生什么？</p>
+  </li>
+  <li>
+    <p>能否用条件跳转代替自修改代码？有什么优缺点？</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="代码复习">代码复习</h2>
+
+<p>完整的 <code class="language-plaintext highlighter-rouge">putc</code> 函数，带详细注释：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># 输出单个字符到 VGA 和串口
+# 参数: AL = 要输出的字符
+# 保留所有通用寄存器
+# 如果输出 '\r'，自动追加 '\n'
+
+putc:
+    pusha                       # 保存所有寄存器
+
+1:  sub %bh, %bh                # VGA 页面 0
+    mov $0x0e, %ah              # Teletype 输出
+    int $0x10                   # BIOS 视频服务
+
+    mov $0x01, %ah              # 串口发送
+    sub %dx, %dx                # 串口 0 (COM1)
+2:  int $0x14                   # BIOS 串口服务
+    test $0x80, %ah             # 检查超时
+    jz 3f                       # 没超时，继续
+    movw $0x9090, 2b            # 超时！禁用串口输出
+
+3:  cmp $'\r', %al              # 是回车符？
+    jne popa_ret                # 不是，返回
+    mov $'\n', %al              # 是，追加换行
+    jmp 1b                      # 再输出一次
+
+popa_ret:
+    popa                        # 恢复所有寄存器
+    ret
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="下一部分">下一部分</h2>
+
+<p><code class="language-plaintext highlighter-rouge">read_sector</code> 函数是最后一个重要的辅助函数，负责从磁盘读取扇区。请参阅下一篇文章。</p>

@@ -1,0 +1,153 @@
+
+
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>http://localhost:4000/</id>
+  <title>Zxsheather</title>
+  <subtitle>A CS Undergraduate's personal blog for sharing thoughts and technical knowledge.</subtitle>
+  <updated>2026-01-27T14:32:34+08:00</updated>
+  <author>
+    <name>Zxsheather</name>
+    <uri>http://localhost:4000/</uri>
+  </author>
+  <link rel="self" type="application/atom+xml" href="http://localhost:4000/feed.xml"/>
+  <link rel="alternate" type="text/html" hreflang="zh-CN"
+    href="http://localhost:4000/"/>
+  <generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator>
+  <rights> © 2026 Zxsheather </rights>
+  <icon>/assets/img/favicons/favicon.ico</icon>
+  <logo>/assets/img/favicons/favicon-96x96.png</logo>
+
+
+  
+  <entry>
+    <title>Pintos 线程系统详解（十二）：优先级调度</title>
+    <link href="http://localhost:4000/posts/pintos-thread-12-priority/" rel="alternate" type="text/html" title="Pintos 线程系统详解（十二）：优先级调度" />
+    <published>2026-01-26T00:00:00+08:00</published>
+  
+    <updated>2026-01-26T00:00:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/pintos-thread-12-priority/</id>
+    <content type="text/html" src="http://localhost:4000/posts/pintos-thread-12-priority/" />
+    <author>
+      <name>Zxsheather</name>
+    </author>
+
+  
+    
+    <category term="技术" />
+    
+    <category term="Pintos" />
+    
+  
+
+  <summary>详细解析 Pintos 中优先级调度的实现，包括优先级捐赠机制。</summary>
+
+  </entry>
+
+  
+  <entry>
+    <title>Pintos 线程系统详解（十一）：空闲线程</title>
+    <link href="http://localhost:4000/posts/pintos-thread-11-idle/" rel="alternate" type="text/html" title="Pintos 线程系统详解（十一）：空闲线程" />
+    <published>2026-01-26T00:00:00+08:00</published>
+  
+    <updated>2026-01-26T00:00:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/pintos-thread-11-idle/</id>
+    <content type="text/html" src="http://localhost:4000/posts/pintos-thread-11-idle/" />
+    <author>
+      <name>Zxsheather</name>
+    </author>
+
+  
+    
+    <category term="技术" />
+    
+    <category term="Pintos" />
+    
+  
+
+  <summary>详细解析 Pintos 中空闲线程的实现，理解操作系统如何处理无任务可执行的情况。</summary>
+
+  </entry>
+
+  
+  <entry>
+    <title>Pintos 线程系统详解（十）：中断处理</title>
+    <link href="http://localhost:4000/posts/pintos-thread-10-interrupt/" rel="alternate" type="text/html" title="Pintos 线程系统详解（十）：中断处理" />
+    <published>2026-01-26T00:00:00+08:00</published>
+  
+    <updated>2026-01-26T00:00:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/pintos-thread-10-interrupt/</id>
+    <content type="text/html" src="http://localhost:4000/posts/pintos-thread-10-interrupt/" />
+    <author>
+      <name>Zxsheather</name>
+    </author>
+
+  
+    
+    <category term="技术" />
+    
+    <category term="Pintos" />
+    
+  
+
+  <summary>详细解析 Pintos 中中断系统与线程调度的关系，理解中断如何驱动线程切换。</summary>
+
+  </entry>
+
+  
+  <entry>
+    <title>Pintos 线程系统详解（九）：条件变量</title>
+    <link href="http://localhost:4000/posts/pintos-thread-09-condition/" rel="alternate" type="text/html" title="Pintos 线程系统详解（九）：条件变量" />
+    <published>2026-01-26T00:00:00+08:00</published>
+  
+    <updated>2026-01-26T00:00:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/pintos-thread-09-condition/</id>
+    <content type="text/html" src="http://localhost:4000/posts/pintos-thread-09-condition/" />
+    <author>
+      <name>Zxsheather</name>
+    </author>
+
+  
+    
+    <category term="技术" />
+    
+    <category term="Pintos" />
+    
+  
+
+  <summary>详细解析 Pintos 中条件变量（Condition Variable）的实现，理解高级同步机制。</summary>
+
+  </entry>
+
+  
+  <entry>
+    <title>Pintos 线程系统详解（八）：锁</title>
+    <link href="http://localhost:4000/posts/pintos-thread-08-lock/" rel="alternate" type="text/html" title="Pintos 线程系统详解（八）：锁" />
+    <published>2026-01-26T00:00:00+08:00</published>
+  
+    <updated>2026-01-26T00:00:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/pintos-thread-08-lock/</id>
+    <content type="text/html" src="http://localhost:4000/posts/pintos-thread-08-lock/" />
+    <author>
+      <name>Zxsheather</name>
+    </author>
+
+  
+    
+    <category term="技术" />
+    
+    <category term="Pintos" />
+    
+  
+
+  <summary>详细解析 Pintos 中锁（Lock）的实现，理解互斥机制。</summary>
+
+  </entry>
+
+</feed>
+
+

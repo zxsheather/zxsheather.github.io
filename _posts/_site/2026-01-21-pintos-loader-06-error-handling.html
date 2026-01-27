@@ -1,0 +1,519 @@
+<h2 id="概述">概述</h2>
+
+<p>在引导过程中，很多事情可能出错：硬盘读取失败、找不到分区、找不到内核等。这部分代码负责处理这些错误情况，向用户显示错误信息，并通知 BIOS 启动失败。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>read_failed:
+start:
+	# Disk sector read failed.
+	call puts
+1:	.string "\rBad read\r"
+
+	# Notify BIOS that boot failed.  See [IntrList].
+	int $0x18
+</code></pre></div></div>
+
+<p>以及前面的：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>no_such_drive:
+no_boot_partition:
+	# Didn't find a Pintos kernel partition anywhere, give up.
+	call puts
+	.string "\rNot found\r"
+
+	# Notify BIOS that boot failed.  See [IntrList].
+	int $0x18
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="错误类型分析">错误类型分析</h2>
+
+<h3 id="错误-1磁盘读取失败bad-read">错误 1：磁盘读取失败（Bad read）</h3>
+
+<p><strong>触发条件：</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">read_sector</code> 函数返回时 CF（进位标志）为 1</li>
+  <li>可能的原因：
+    <ul>
+      <li>物理硬盘故障</li>
+      <li>坏扇区</li>
+      <li>BIOS 驱动问题</li>
+      <li>扇区号超出范围</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>发生位置：</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>call read_sector
+jc read_failed      # 如果 CF=1，跳转到错误处理
+</code></pre></div></div>
+
+<h3 id="错误-2找不到驱动器no-such-drive">错误 2：找不到驱动器（No such drive）</h3>
+
+<p><strong>触发条件：</strong></p>
+<ul>
+  <li>尝试读取不存在的硬盘的 MBR</li>
+  <li><code class="language-plaintext highlighter-rouge">read_sector</code> 在读取扇区 0 时失败</li>
+</ul>
+
+<p><strong>发生位置：</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>read_mbr:
+    ...
+    call read_sector
+    jc no_such_drive    # 硬盘不存在
+</code></pre></div></div>
+
+<h3 id="错误-3找不到启动分区not-found">错误 3：找不到启动分区（Not found）</h3>
+
+<p><strong>触发条件：</strong></p>
+<ul>
+  <li>扫描完所有硬盘和分区</li>
+  <li>没有找到类型为 0x20（Pintos）且可启动（0x80）的分区</li>
+</ul>
+
+<p><strong>发生位置：</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>next_drive:
+    inc %dl
+    jnc read_mbr        # 继续扫描下一个硬盘
+                        # 如果溢出，跳到 no_boot_partition
+
+no_such_drive:
+no_boot_partition:
+    # 打印 "Not found"
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="逐行详解">逐行详解</h2>
+
+<h3 id="错误处理入口点">错误处理入口点</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>read_failed:
+start:
+</code></pre></div></div>
+
+<p>这里有两个标签指向同一位置！</p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">read_failed</code></strong>：磁盘读取失败时跳转到这里
+<strong><code class="language-plaintext highlighter-rouge">start</code></strong>：用于存储跳转地址（在成功路径中被覆盖）</p>
+
+<p>这是一个巧妙的代码复用：</p>
+<ul>
+  <li>失败时：执行错误处理代码</li>
+  <li>成功时：这块内存被跳转地址覆盖</li>
+</ul>
+
+<hr />
+
+<h3 id="打印错误信息">打印错误信息</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	call puts
+1:	.string "\rBad read\r"
+</code></pre></div></div>
+
+<p><strong>分析：</strong></p>
+
+<ol>
+  <li><strong><code class="language-plaintext highlighter-rouge">call puts</code></strong>：调用字符串打印函数</li>
+  <li><strong><code class="language-plaintext highlighter-rouge">1:</code></strong>：局部标签（用于内部跳转，不影响其他代码）</li>
+  <li><strong><code class="language-plaintext highlighter-rouge">.string "\rBad read\r"</code></strong>：
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">\r</code>（回车符）将光标移动到行首</li>
+      <li>“Bad read” 是错误信息</li>
+      <li>最后的 <code class="language-plaintext highlighter-rouge">\r</code> 确保光标在行首</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>为什么用 <code class="language-plaintext highlighter-rouge">\r</code> 而不是 <code class="language-plaintext highlighter-rouge">\n</code>？</strong></p>
+
+<p>回车符 <code class="language-plaintext highlighter-rouge">\r</code> 只移动光标到行首，不换行。这样可以：</p>
+<ul>
+  <li>覆盖之前的 “Loading…” 输出</li>
+  <li>不浪费屏幕空间</li>
+  <li>清晰显示错误发生</li>
+</ul>
+
+<hr />
+
+<h3 id="通知-bios-启动失败">通知 BIOS 启动失败</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	int $0x18
+</code></pre></div></div>
+
+<p><strong>INT 18h 是什么？</strong></p>
+
+<p>这是 BIOS 的”启动失败”中断。当引导加载程序无法启动操作系统时，调用此中断。</p>
+
+<p><strong>BIOS 可能的响应：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>BIOS 行为</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>尝试下一个启动设备</td>
+      <td>如果启动顺序中还有其他设备</td>
+    </tr>
+    <tr>
+      <td>显示错误信息</td>
+      <td>“No bootable device found”</td>
+    </tr>
+    <tr>
+      <td>进入 BIOS 设置</td>
+      <td>让用户选择其他启动方式</td>
+    </tr>
+    <tr>
+      <td>执行 ROM BASIC</td>
+      <td>在很老的系统上</td>
+    </tr>
+    <tr>
+      <td>系统挂起</td>
+      <td>什么都不做</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>历史背景：</strong></p>
+
+<p>在早期 IBM PC 上，INT 18h 会尝试从 ROM 中启动 BASIC 解释器。现代 BIOS 通常显示错误或尝试其他启动设备。</p>
+
+<hr />
+
+<h3 id="not-found-错误处理">“Not found” 错误处理</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>no_such_drive:
+no_boot_partition:
+	call puts
+	.string "\rNot found\r"
+	int $0x18
+</code></pre></div></div>
+
+<p>两种不同的错误使用相同的处理代码：</p>
+<ul>
+  <li><strong>no_such_drive</strong>：硬盘不存在</li>
+  <li><strong>no_boot_partition</strong>：找不到 Pintos 分区</li>
+</ul>
+
+<p>它们共享同一个错误信息 “Not found”，因为对用户来说结果是一样的：无法启动。</p>
+
+<hr />
+
+<h2 id="代码复用详解">代码复用详解</h2>
+
+<h3 id="为什么-start-和-read_failed-是同一位置">为什么 <code class="language-plaintext highlighter-rouge">start</code> 和 <code class="language-plaintext highlighter-rouge">read_failed</code> 是同一位置？</h3>
+
+<p>这是为了节省空间。让我们详细分析：</p>
+
+<p><strong>需要的空间：</strong></p>
+<ul>
+  <li>跳转地址存储：4 字节</li>
+  <li>错误处理代码：约 10+ 字节</li>
+</ul>
+
+<p><strong>复用方案：</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>                 成功路径                    失败路径
+                    │                           │
+                    ▼                           ▼
+start/read_failed: ┌───┬───┬───┬───┐    ┌───────────────┐
+                   │ 跳│ 转│ 地│ 址│    │call puts      │
+                   └───┴───┴───┴───┘    │"Bad read"     │
+                         │               └───────────────┘
+                         ▼
+                    ljmp *start
+                    (使用这4字节跳转)
+</code></pre></div></div>
+
+<p><strong>成功时：</strong></p>
+<ol>
+  <li><code class="language-plaintext highlighter-rouge">mov %dx, start</code> 覆盖 <code class="language-plaintext highlighter-rouge">call</code> 指令的前 2 字节</li>
+  <li><code class="language-plaintext highlighter-rouge">movw $0x2000, start + 2</code> 覆盖接下来的 2 字节</li>
+  <li><code class="language-plaintext highlighter-rouge">ljmp *start</code> 从这 4 字节读取跳转地址</li>
+</ol>
+
+<p><strong>失败时：</strong></p>
+<ol>
+  <li>直接执行 <code class="language-plaintext highlighter-rouge">call puts</code></li>
+  <li>打印错误信息</li>
+  <li>调用 INT 18h</li>
+</ol>
+
+<hr />
+
+<h2 id="错误显示时序">错误显示时序</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>正常启动:
+Pintos hda1234
+Loading....................
+(跳转到内核，不再显示)
+
+磁盘读取失败:
+Pintos hda1
+Loading.....
+Bad read
+(系统挂起或 BIOS 接管)
+
+找不到分区:
+Pintos hda1234 hdb1234
+Not found
+(系统挂起或 BIOS 接管)
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="进位标志carry-flag详解">进位标志（Carry Flag）详解</h2>
+
+<p><code class="language-plaintext highlighter-rouge">read_sector</code> 使用进位标志 CF 报告错误：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>read_sector:
+    ...
+    int $0x13           # BIOS 磁盘服务
+    ...
+    ret                 # CF 保持 BIOS 设置的值
+
+# 调用方检查 CF：
+call read_sector
+jc error_handler        # Jump if Carry (CF=1)
+</code></pre></div></div>
+
+<p><strong>为什么用 CF 而不是返回值？</strong></p>
+
+<ol>
+  <li><strong>效率</strong>：不需要额外的寄存器或内存</li>
+  <li><strong>BIOS 约定</strong>：INT 13h 本身就用 CF 报告错误</li>
+  <li><strong>简单</strong>：一条 <code class="language-plaintext highlighter-rouge">jc</code> 指令就能检查</li>
+</ol>
+
+<p><strong>CF 的两种状态：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>CF 值</th>
+      <th>含义</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0</td>
+      <td>操作成功</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>操作失败</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="调试技巧">调试技巧</h2>
+
+<h3 id="如何诊断-bad-read-错误">如何诊断 “Bad read” 错误</h3>
+
+<ol>
+  <li><strong>检查硬盘镜像</strong>
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 验证镜像文件完整性</span>
+<span class="nb">ls</span> <span class="nt">-l</span> os.dsk
+xxd os.dsk | <span class="nb">head</span>
+</code></pre></div>    </div>
+  </li>
+  <li><strong>检查 QEMU 参数</strong>
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 确保硬盘正确连接</span>
+qemu-system-i386 <span class="nt">-hda</span> os.dsk ...
+</code></pre></div>    </div>
+  </li>
+  <li><strong>查看 BIOS 错误码</strong>
+    <ul>
+      <li>INT 13h 在 AH 中返回错误码</li>
+      <li>常见错误码：
+        <ul>
+          <li>0x01: 无效命令</li>
+          <li>0x02: 地址标记未找到</li>
+          <li>0x04: 扇区未找到</li>
+          <li>0x10: CRC 错误</li>
+          <li>0x20: 控制器故障</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ol>
+
+<h3 id="如何诊断-not-found-错误">如何诊断 “Not found” 错误</h3>
+
+<ol>
+  <li><strong>检查分区表</strong>
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 查看分区信息</span>
+fdisk <span class="nt">-l</span> os.dsk
+</code></pre></div>    </div>
+  </li>
+  <li><strong>验证分区类型</strong>
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 分区类型应该是 0x20</span>
+xxd <span class="nt">-s</span> 446 <span class="nt">-l</span> 64 os.dsk
+</code></pre></div>    </div>
+  </li>
+  <li><strong>检查启动标志</strong>
+    <ul>
+      <li>第一个字节应该是 0x80（可启动）</li>
+    </ul>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="错误处理流程图">错误处理流程图</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>              ┌────────────────────────────┐
+              │      开始引导过程          │
+              └─────────────┬──────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │       读取 MBR             │
+              └─────────────┬──────────────┘
+                     │      │
+               成功  │      │ 失败
+                     │      └──────────────────┐
+              ┌──────▼──────┐                  │
+              │ 检查分区表  │                  │
+              └──────┬──────┘                  │
+                     │                         │
+            ┌────────┴────────┐                │
+            │找到Pintos分区？ │                │
+            └────────┬────────┘                │
+               │     │                         │
+          是   │     │ 否                      │
+               │     └─────────────┐           │
+        ┌──────▼──────┐           │           │
+        │  加载内核   │           │           │
+        └──────┬──────┘           │           │
+          │    │                  │           │
+     成功 │    │ 失败             │           │
+          │    │                  │           │
+          │    └────────┐         │           │
+          │             │         │           │
+   ┌──────▼──────┐  ┌───▼─────────▼───────────▼───┐
+   │ 跳转到内核  │  │        错误处理              │
+   │  (成功!)   │  │  - 打印 "Bad read" 或        │
+   └─────────────┘  │    "Not found"              │
+                    │  - INT 18h                  │
+                    │  - BIOS 接管                │
+                    └─────────────────────────────┘
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="代码安全性分析">代码安全性分析</h2>
+
+<h3 id="潜在风险">潜在风险</h3>
+
+<ol>
+  <li><strong>INT 18h 可能返回</strong>
+    <ul>
+      <li>代码假设 INT 18h 不会返回</li>
+      <li>如果返回，行为未定义</li>
+    </ul>
+  </li>
+  <li><strong>代码复用的脆弱性</strong>
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">start</code> 标签的位置很关键</li>
+      <li>如果代码结构改变，可能破坏复用</li>
+    </ul>
+  </li>
+  <li><strong>没有无限循环保护</strong>
+    <ul>
+      <li>错误处理后，如果 BIOS 返回，代码可能继续执行</li>
+      <li>可能执行到随机数据</li>
+    </ul>
+  </li>
+</ol>
+
+<h3 id="改进建议如果空间允许">改进建议（如果空间允许）</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>error_loop:
+    call puts
+    .string "\rError\r"
+    cli                     # 禁用中断
+    hlt                     # 停止 CPU
+    jmp error_loop          # 以防万一
+</code></pre></div></div>
+
+<p>这样确保系统在错误后完全停止。</p>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-为什么两种错误用同一个消息">Q1: 为什么两种错误用同一个消息？</h3>
+
+<p>空间限制！每个字符串占用宝贵的字节。用户通常不需要区分具体是哪种 “未找到” 错误。</p>
+
+<h3 id="q2-int-18h-之后会发生什么">Q2: INT 18h 之后会发生什么？</h3>
+
+<p>取决于 BIOS 设置：</p>
+<ul>
+  <li>可能尝试从 CD-ROM、USB 等启动</li>
+  <li>可能显示 “No bootable device”</li>
+  <li>可能进入 BIOS 设置界面</li>
+</ul>
+
+<h3 id="q3-如果-int-18h-返回会怎样">Q3: 如果 INT 18h 返回会怎样？</h3>
+
+<p>代码没有处理 INT 18h 返回的情况。如果 BIOS 返回：</p>
+<ul>
+  <li>执行会继续到 <code class="language-plaintext highlighter-rouge">int $0x18</code> 之后的代码</li>
+  <li>可能是 <code class="language-plaintext highlighter-rouge">puts</code> 函数或其他代码</li>
+  <li>结果未定义，可能崩溃</li>
+</ul>
+
+<p><strong>为什么不处理？</strong></p>
+<ul>
+  <li>大多数 BIOS 不会返回</li>
+  <li>没有合理的恢复操作</li>
+  <li>节省代码空间</li>
+</ul>
+
+<h3 id="q4-能否显示更详细的错误信息">Q4: 能否显示更详细的错误信息？</h3>
+
+<p>可以，但会增加代码大小。例如：</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># 更详细的版本（伪代码）
+cmp $0x80, %ah      # 检查 BIOS 错误码
+je timeout_error
+cmp $0x20, %ah
+je controller_error
+...
+</code></pre></div></div>
+
+<p>这会占用太多空间，不适合 512 字节限制。</p>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果要区分 “Bad read” 和 “Not found” 显示不同颜色，需要如何修改代码？</p>
+  </li>
+  <li>
+    <p>为什么 <code class="language-plaintext highlighter-rouge">int $0x18</code> 之后没有 <code class="language-plaintext highlighter-rouge">hlt</code> 指令？</p>
+  </li>
+  <li>
+    <p>如果在模拟器（如 QEMU）中遇到 “Not found” 错误，应该如何排查？</p>
+  </li>
+  <li>
+    <p>能否在不增加代码大小的情况下提供更多错误信息？（提示：考虑用不同数量的字符表示不同错误）</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="下一部分">下一部分</h2>
+
+<p>接下来我们分析 <code class="language-plaintext highlighter-rouge">puts</code> 辅助函数——一个非常巧妙的字符串打印实现。请参阅下一篇文章。</p>

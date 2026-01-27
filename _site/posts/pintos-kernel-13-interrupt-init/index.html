@@ -1,0 +1,5226 @@
+<!doctype html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- `site.alt_lang` can specify a language different from the UI -->
+<html lang="zh-CN" >
+  <head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f7f7">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1b1b1e">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta
+    name="viewport"
+    content="width=device-width, user-scalable=no initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
+  ><!-- Setup Open Graph image -->
+
+  
+
+  <!-- Begin Jekyll SEO tag v2.8.0 -->
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="Pintos Kernel 13 Interrupt Init" />
+<meta property="og:locale" content="zh_CN" />
+<meta name="description" content="Pintos 内核启动（十三）：中断系统初始化 概述 本文档详细解析 Pintos 内核的中断系统初始化过程 intr_init()。中断是操作系统响应外部事件和处理异常的核心机制。正确初始化中断系统是操作系统能够响应硬件事件（如定时器、键盘）和处理软件异常（如除零错误、缺页）的前提。 Pintos 的中断系统涉及以下关键组件： IDT（Interrupt Descriptor Table）：中断描述符表，存储中断处理程序的入口 PIC（Programmable Interrupt Controller）：可编程中断控制器，管理硬件中断 中断处理函数：实际处理中断的 C 代码 原始代码 interrupt.c 中的 intr_init() 函数 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 /** Initializes the interrupt system. */ void intr_init (void) { uint64_t idtr_operand; int i; /* Initialize interrupt controller. */ pic_init (); /* Initialize IDT. */ for (i = 0; i &lt; INTR_CNT; i++) idt[i] = make_intr_gate (intr_stubs[i], 0); /* Load IDT register. See [IA32-v2a] &quot;LIDT&quot; and [IA32-v3a] 5.10 &quot;Interrupt Descriptor Table (IDT)&quot;. */ idtr_operand = make_idtr_operand (sizeof idt - 1, idt); asm volatile (&quot;lidt %0&quot; : : &quot;m&quot; (idtr_operand)); /* Initialize intr_names. */ for (i = 0; i &lt; INTR_CNT; i++) intr_names[i] = &quot;unknown&quot;; intr_names[0] = &quot;#DE Divide Error&quot;; intr_names[1] = &quot;#DB Debug Exception&quot;; intr_names[2] = &quot;NMI Interrupt&quot;; intr_names[3] = &quot;#BP Breakpoint Exception&quot;; intr_names[4] = &quot;#OF Overflow Exception&quot;; intr_names[5] = &quot;#BR BOUND Range Exceeded Exception&quot;; intr_names[6] = &quot;#UD Invalid Opcode Exception&quot;; intr_names[7] = &quot;#NM Device Not Available Exception&quot;; intr_names[8] = &quot;#DF Double Fault Exception&quot;; intr_names[9] = &quot;Coprocessor Segment Overrun&quot;; intr_names[10] = &quot;#TS Invalid TSS Exception&quot;; intr_names[11] = &quot;#NP Segment Not Present&quot;; intr_names[12] = &quot;#SS Stack Fault Exception&quot;; intr_names[13] = &quot;#GP General Protection Exception&quot;; intr_names[14] = &quot;#PF Page-Fault Exception&quot;; intr_names[16] = &quot;#MF x87 FPU Floating-Point Error&quot;; intr_names[17] = &quot;#AC Alignment Check Exception&quot;; intr_names[18] = &quot;#MC Machine-Check Exception&quot;; intr_names[19] = &quot;#XF SIMD Floating-Point Exception&quot;; } pic_init() 函数 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 /** Initializes the PICs. Refer to [8259A] for details. By default, interrupts 0...15 delivered by the PICs will go to interrupt vectors 0...15. Those vectors are also used for CPU traps and exceptions, so we reprogram the PICs so that interrupts 0...15 are delivered to interrupt vectors 32...47 (0x20...0x2f) instead. */ static void pic_init (void) { /* Mask all interrupts on both PICs. */ outb (PIC0_DATA, 0xff); outb (PIC1_DATA, 0xff); /* Initialize master. */ outb (PIC0_CTRL, 0x11); /* ICW1: single mode, edge triggered, expect ICW4. */ outb (PIC0_DATA, 0x20); /* ICW2: line IR0...7 -&gt; irq 0x20...0x27. */ outb (PIC0_DATA, 0x04); /* ICW3: slave PIC on line IR2. */ outb (PIC0_DATA, 0x01); /* ICW4: 8086 mode, normal EOI, non-buffered. */ /* Initialize slave. */ outb (PIC1_CTRL, 0x11); /* ICW1: single mode, edge triggered, expect ICW4. */ outb (PIC1_DATA, 0x28); /* ICW2: line IR0...7 -&gt; irq 0x28...0x2f. */ outb (PIC1_DATA, 0x02); /* ICW3: slave ID is 2. */ outb (PIC1_DATA, 0x01); /* ICW4: 8086 mode, normal EOI, non-buffered. */ /* Unmask all interrupts. */ outb (PIC0_DATA, 0x00); outb (PIC1_DATA, 0x00); } 前置知识 1. x86 中断分类 x86 系统中的中断分为三类： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 中断类型 │ ├─→ 异常（Exceptions）: CPU 内部产生 │ │ │ ├─→ 故障（Faults）: 可恢复，返回到引起故障的指令 │ │ 例：#PF Page Fault, #GP General Protection │ │ │ ├─→ 陷阱（Traps）: 可恢复，返回到下一条指令 │ │ 例：#BP Breakpoint, #OF Overflow │ │ │ └─→ 终止（Aborts）: 不可恢复 │ 例：#DF Double Fault, #MC Machine Check │ ├─→ 软件中断（Software Interrupts）: INT 指令产生 │ 例：INT 0x80 (系统调用) │ └─→ 硬件中断（Hardware Interrupts）: 外部设备产生 │ ├─→ 可屏蔽中断（Maskable）: 通过 PIC 传递 │ 例：定时器、键盘、硬盘 │ └─→ 不可屏蔽中断（NMI）: 直接到达 CPU 例：内存校验错误 2. 中断向量表 x86 支持 256 个中断向量（0-255）： 向量范围 类型 说明 0-19 CPU 异常 由 Intel 定义 20-31 保留 Intel 保留 32-47 硬件中断 重映射后的 IRQ 0-15 48-255 可用 软件中断、系统调用等 3. 8259A PIC 架构 PC 使用两片级联的 8259A PIC： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 ┌─────────────────┐ │ CPU │ │ │ │ INTR ◄────────┼──────┐ └─────────────────┘ │ │ ┌──────────────────────┐ ┌──────┴──────────────┐ │ 外部设备 │ │ Master PIC │ │ │ │ (8259A #0) │ │ IRQ0: 定时器 ───────┼────────────────────┼→ IR0 │ │ IRQ1: 键盘 ─────────┼────────────────────┼→ IR1 │ │ IRQ2: 级联 ─────────┼────────────────────┼→ IR2 ◄─────────────┼──┐ │ IRQ3: COM2 ─────────┼────────────────────┼→ IR3 │ │ │ IRQ4: COM1 ─────────┼────────────────────┼→ IR4 │ │ │ IRQ5: LPT2 ─────────┼────────────────────┼→ IR5 │ │ │ IRQ6: 软盘 ─────────┼────────────────────┼→ IR6 │ │ │ IRQ7: LPT1 ─────────┼────────────────────┼→ IR7 │ │ │ │ └────────────────────┘ │ │ │ │ │ │ ┌────────────────────┐ │ │ │ │ Slave PIC │ │ │ │ │ (8259A #1) │ │ │ IRQ8: RTC ──────────┼────────────────────┼→ IR0 │ │ │ IRQ9: ACPI ─────────┼────────────────────┼→ IR1 │ │ │ IRQ10: 可用 ────────┼────────────────────┼→ IR2 │ │ │ IRQ11: 可用 ────────┼────────────────────┼→ IR3 │ │ │ IRQ12: PS/2鼠标 ────┼────────────────────┼→ IR4 │ │ │ IRQ13: FPU ─────────┼────────────────────┼→ IR5 │ │ │ IRQ14: IDE Primary ─┼────────────────────┼→ IR6 │ │ │ IRQ15: IDE Secondary┼────────────────────┼→ IR7 │ │ │ │ │ INT ────────┼──┘ └──────────────────────┘ └────────────────────┘ 4. IDT 描述符格式 每个 IDT 条目（门描述符）是 8 字节： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 63 48 47 46 45 44 43 40 39 32 +------------------+--+-----+--+------+------------+ | Offset 31:16 |P |DPL |S | Type | Reserved | +------------------+--+-----+--+------+------------+ 31 16 15 0 +------------------+-----------------------------+ | Segment Selector | Offset 15:0 | +------------------+-----------------------------+ 各字段说明： - Offset: 中断处理程序的地址（分成两部分） - P: 存在位（1=有效） - DPL: 描述符特权级（0-3） - S: 系统段（必须为0） - Type: 门类型（14=中断门，15=陷阱门） - Segment Selector: 代码段选择子 5. 中断门 vs 陷阱门 特性 中断门（Interrupt Gate） 陷阱门（Trap Gate） Type 14 (0xE) 15 (0xF) 进入时 自动关中断 (IF=0) 保持中断状态 用途 硬件中断 软件中断、异常 6. 中断帧（Interrupt Frame） 中断发生时 CPU 自动压栈的内容： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 高地址 ┌───────────────────┐ │ SS │ (特权级改变时) ├───────────────────┤ │ ESP │ (特权级改变时) ├───────────────────┤ │ EFLAGS │ ├───────────────────┤ │ CS │ ├───────────────────┤ │ EIP │ ├───────────────────┤ │ Error Code │ (某些异常) ├───────────────────┤ │ (软件压入的) │ │ 寄存器等 │ └───────────────────┘ 低地址 逐行代码解析 intr_init() 函数解析 第1-2行：变量声明 1 2 uint64_t idtr_operand; int i; 详细解析： idtr_operand： 64 位值，存储 IDTR 寄存器的操作数 格式：低 16 位是限制（limit），高 32 位是基址（base） i：循环变量 第3行：初始化 PIC 1 pic_init (); 详细解析： 这是关键的一步，重新配置 8259A PIC。详见下面的 pic_init() 解析。 第4-5行：初始化 IDT 1 2 for (i = 0; i &lt; INTR_CNT; i++) idt[i] = make_intr_gate (intr_stubs[i], 0); 详细解析： INTR_CNT = 256：x86 支持的中断向量数 intr_stubs[]： 中断存根函数数组 在 intr-stubs.S 中定义 每个存根函数负责保存上下文并调用统一的处理函数 make_intr_gate()： 创建中断门描述符 DPL=0 表示只有内核可以触发 初始状态： 所有中断都使用中断门（进入时关中断） 所有中断都没有实际处理程序（后续注册） intr_stubs 示意： # intr-stubs.S 中的代码结构（简化） intr00_stub: push $0 # 假错误码 push $0x00 # 向量号 jmp intr_entry intr01_stub: push $0 # 假错误码 push $0x01 # 向量号 jmp intr_entry # ... 256 个存根函数 ... 第6-8行：加载 IDT 1 2 idtr_operand = make_idtr_operand (sizeof idt - 1, idt); asm volatile (&quot;lidt %0&quot; : : &quot;m&quot; (idtr_operand)); 详细解析： make_idtr_operand()： 1 2 3 4 5 static inline uint64_t make_idtr_operand (uint16_t limit, void *base) { return limit | ((uint64_t) (uint32_t) base &lt;&lt; 16); } 构造 IDTR 操作数格式： 1 2 3 4 63 16 15 0 +--------------------------------+----------------+ | Base Address | Limit | +--------------------------------+----------------+ sizeof idt - 1： IDT 大小为 256 × 8 = 2048 字节 limit = 2048 - 1 = 2047 LIDT 指令： 将 IDT 的位置和大小加载到 IDTR 寄存器 之后 CPU 会使用这个 IDT 处理中断 IDTR 寄存器结构： 1 2 3 4 47 16 15 0 +--------------------------------+----------------+ | IDT Base Address | IDT Limit | +--------------------------------+----------------+ 第9-25行：初始化中断名称 1 2 3 4 5 for (i = 0; i &lt; INTR_CNT; i++) intr_names[i] = &quot;unknown&quot;; intr_names[0] = &quot;#DE Divide Error&quot;; intr_names[1] = &quot;#DB Debug Exception&quot;; // ... 更多中断名称 ... 详细解析： 这些名称用于调试，当发生意外中断时打印友好的信息。 标准 CPU 异常列表： 向量 助记符 名称 类型 错误码 0 #DE Divide Error Fault 无 1 #DB Debug Fault/Trap 无 2 NMI Non-Maskable Interrupt Interrupt 无 3 #BP Breakpoint Trap 无 4 #OF Overflow Trap 无 5 #BR BOUND Range Exceeded Fault 无 6 #UD Invalid Opcode Fault 无 7 #NM Device Not Available Fault 无 8 #DF Double Fault Abort 有(0) 9 - Coprocessor Segment Overrun Fault 无 10 #TS Invalid TSS Fault 有 11 #NP Segment Not Present Fault 有 12 #SS Stack-Segment Fault Fault 有 13 #GP General Protection Fault 有 14 #PF Page Fault Fault 有 15 - Reserved - - 16 #MF x87 FPU Error Fault 无 17 #AC Alignment Check Fault 有(0) 18 #MC Machine Check Abort 无 19 #XF SIMD Floating-Point Fault 无 pic_init() 函数解析 第1-2行：屏蔽所有中断 1 2 outb (PIC0_DATA, 0xff); outb (PIC1_DATA, 0xff); 详细解析： 写入数据端口设置中断屏蔽寄存器（IMR） 0xFF = 11111111b = 屏蔽所有 8 个中断线 防止初始化过程中产生中断 第3-6行：初始化主 PIC 1 2 3 4 outb (PIC0_CTRL, 0x11); /* ICW1 */ outb (PIC0_DATA, 0x20); /* ICW2 */ outb (PIC0_DATA, 0x04); /* ICW3 */ outb (PIC0_DATA, 0x01); /* ICW4 */ ICW（Initialization Command Words）详解： ICW1 (0x11)： 1 2 3 4 5 6 位 7-5: 未使用 位 4: 1 = ICW1 标识 位 3: 0 = 边沿触发 位 2: 0 = 8 字节中断向量间隔 位 1: 0 = 级联模式 位 0: 1 = 需要 ICW4 ICW2 (0x20)： 1 2 3 位 7-3: 向量基址的高 5 位 = 0x20 = 32 位 2-0: 由 PIC 填充 结果：IR0-7 映射到向量 0x20-0x27 ICW3 (0x04)： 1 2 位 2: 1 = IR2 连接从 PIC 其他位: 0 ICW4 (0x01)： 1 2 3 4 位 4: 0 = 非特殊全嵌套模式 位 3-2: 00 = 非缓冲模式 位 1: 0 = 正常 EOI 位 0: 1 = 8086 模式 第7-10行：初始化从 PIC 1 2 3 4 outb (PIC1_CTRL, 0x11); /* ICW1 */ outb (PIC1_DATA, 0x28); /* ICW2: 映射到 0x28-0x2f */ outb (PIC1_DATA, 0x02); /* ICW3: 从 ID = 2 */ outb (PIC1_DATA, 0x01); /* ICW4 */ ICW3 (0x02) 对于从 PIC： 1 位 2-0: 010 = 从 ID 为 2（连接到主 PIC 的 IR2） 第11-12行：取消屏蔽所有中断 1 2 outb (PIC0_DATA, 0x00); outb (PIC1_DATA, 0x00); 详细解析： 0x00 = 00000000b = 允许所有中断 虽然 PIC 不再屏蔽中断，但 CPU 的 IF 标志仍为 0 中断要等到 intr_enable() 才会真正被处理 make_gate() 函数解析 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 static uint64_t make_gate (void (*function) (void), int dpl, int type) { uint32_t e0, e1; ASSERT (function != NULL); ASSERT (dpl &gt;= 0 &amp;&amp; dpl &lt;= 3); ASSERT (type &gt;= 0 &amp;&amp; type &lt;= 15); e0 = (((uint32_t) function &amp; 0xffff) /* Offset 15:0. */ | (SEL_KCSEG &lt;&lt; 16)); /* Target code segment. */ e1 = (((uint32_t) function &amp; 0xffff0000) /* Offset 31:16. */ | (1 &lt;&lt; 15) /* Present. */ | ((uint32_t) dpl &lt;&lt; 13) /* Descriptor privilege level. */ | (0 &lt;&lt; 12) /* System. */ | ((uint32_t) type &lt;&lt; 8)); /* Gate type. */ return e0 | ((uint64_t) e1 &lt;&lt; 32); } 描述符构造图示： 假设 function = 0xC0012345，dpl = 0，type = 14（中断门）： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 e0 构造： ┌────────────────┬────────────────┐ │ SEL_KCSEG │ Offset 15:0 │ │ (0x08) │ (0x2345) │ └────────────────┴────────────────┘ e0 = 0x00082345 e1 构造： ┌────────────────┬─┬──┬─┬────┬────┐ │ Offset 31:16 │P│DPL│S│Type│ 0 │ │ (0xC001) │1│ 0 │0│ E │ │ └────────────────┴─┴──┴─┴────┴────┘ e1 = 0xC0018E00 最终描述符： 63 0 +--------------------------------------------------+ | 0xC0018E00 | 0x00082345 | +--------------------------------------------------+ 中断处理流程 完整的中断处理流程 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 1. 中断发生 │ ├─→ 硬件中断：设备 → PIC → CPU INTR │ └─→ 异常/软中断：CPU 内部产生 2. CPU 响应 │ ├─→ 保存当前状态到栈 │ - EFLAGS, CS, EIP │ - 错误码（如果有） │ - SS, ESP（特权级改变时） │ └─→ 从 IDT 获取处理程序地址 向量号 × 8 + IDT 基址 3. 跳转到中断存根 │ ├─→ intrNN_stub (intr-stubs.S) │ - 压入错误码（如果 CPU 没压入） │ - 压入向量号 │ - 跳转到 intr_entry │ └─→ intr_entry - 保存所有通用寄存器 - 保存段寄存器 - 设置内核数据段 - 调用 intr_handler() 4. C 语言处理 │ └─→ intr_handler (struct intr_frame *frame) │ ├─→ 外部中断？ │ - 设置 in_external_intr = true │ ├─→ 查找并调用注册的处理程序 │ handler = intr_handlers[frame-&gt;vec_no] │ └─→ 外部中断完成处理 - 发送 EOI 到 PIC - 检查是否需要调度 5. 返回 │ └─→ intr_exit (intr-stubs.S) - 恢复段寄存器 - 恢复通用寄存器 - iret 指令返回 intr_handler() 函数详解 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 void intr_handler (struct intr_frame *frame) { bool external; intr_handler_func *handler; /* External interrupts are special. */ external = frame-&gt;vec_no &gt;= 0x20 &amp;&amp; frame-&gt;vec_no &lt; 0x30; if (external) { ASSERT (intr_get_level () == INTR_OFF); ASSERT (!intr_context ()); in_external_intr = true; yield_on_return = false; } /* Invoke the interrupt&#39;s handler. */ handler = intr_handlers[frame-&gt;vec_no]; if (handler != NULL) handler (frame); else if (frame-&gt;vec_no == 0x27 || frame-&gt;vec_no == 0x2f) { /* Spurious interrupt, ignore it. */ } else unexpected_interrupt (frame); /* Complete the processing of an external interrupt. */ if (external) { ASSERT (intr_get_level () == INTR_OFF); ASSERT (intr_context ()); in_external_intr = false; pic_end_of_interrupt (frame-&gt;vec_no); if (yield_on_return) thread_yield (); } } 关键点： 外部中断识别：向量号 0x20-0x2F 是 PIC 重映射后的硬件中断 伪中断（Spurious Interrupt）： IRQ7 (0x27) 和 IRQ15 (0x2f) 可能产生伪中断 由于 PIC 的硬件特性导致 应该忽略而不是报错 EOI（End of Interrupt）： 必须发送 EOI 告知 PIC 中断处理完成 否则 PIC 不会传递后续中断 yield_on_return： 允许中断处理程序请求调度 常用于定时器中断（时间片用完） 中断帧结构 struct intr_frame 详解 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 struct intr_frame { /* 由 intr_entry 压入的寄存器 */ uint32_t edi; /* Saved EDI. */ uint32_t esi; /* Saved ESI. */ uint32_t ebp; /* Saved EBP. */ uint32_t esp_dummy; /* Not used (PUSHA 的 ESP). */ uint32_t ebx; /* Saved EBX. */ uint32_t edx; /* Saved EDX. */ uint32_t ecx; /* Saved ECX. */ uint32_t eax; /* Saved EAX. */ uint16_t gs, :16; /* Saved GS. */ uint16_t fs, :16; /* Saved FS. */ uint16_t es, :16; /* Saved ES. */ uint16_t ds, :16; /* Saved DS. */ /* 由 intrNN_stub 压入 */ uint32_t vec_no; /* Interrupt vector number. */ uint32_t error_code; /* Error code. */ void *frame_pointer; /* Saved EBP (for backtrace). */ /* 由 CPU 压入 */ void (*eip) (void); /* Next instruction. */ uint16_t cs, :16; /* Code segment. */ uint32_t eflags; /* CPU flags. */ void *esp; /* Stack pointer. */ uint16_t ss, :16; /* Stack segment. */ }; 栈布局图： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 中断发生时的栈布局（从高地址到低地址）： ┌─────────────────────────────────┐ 高地址 │ SS │ ← (仅在特权级改变时) ├─────────────────────────────────┤ │ ESP │ ← (仅在特权级改变时) ├─────────────────────────────────┤ │ EFLAGS │ ← CPU 压入 ├─────────────────────────────────┤ │ CS │ ← CPU 压入 ├─────────────────────────────────┤ │ EIP │ ← CPU 压入 ├─────────────────────────────────┤ │ Error Code │ ← CPU/存根 压入 ├─────────────────────────────────┤ │ Frame Pointer │ ← 存根 压入 ├─────────────────────────────────┤ │ vec_no │ ← 存根 压入 ├─────────────────────────────────┤ │ DS │ ← intr_entry 压入 ├─────────────────────────────────┤ │ ES │ ├─────────────────────────────────┤ │ FS │ ├─────────────────────────────────┤ │ GS │ ├─────────────────────────────────┤ │ EAX, ECX, EDX, EBX │ ← PUSHA │ ESP_dummy, EBP, ESI, EDI │ └─────────────────────────────────┘ 低地址 (ESP 指向这里) 中断注册 注册外部中断 1 2 3 4 5 6 7 void intr_register_ext (uint8_t vec_no, intr_handler_func *handler, const char *name) { ASSERT (vec_no &gt;= 0x20 &amp;&amp; vec_no &lt;= 0x2f); register_handler (vec_no, 0, INTR_OFF, handler, name); } 使用示例（定时器）： 1 2 3 4 5 6 7 8 /* timer.c */ void timer_init (void) { /* ... 配置 PIT ... */ intr_register_ext (0x20, timer_interrupt, &quot;8254 Timer&quot;); } 注册内部中断 1 2 3 4 5 6 7 void intr_register_int (uint8_t vec_no, int dpl, enum intr_level level, intr_handler_func *handler, const char *name) { ASSERT (vec_no &lt; 0x20 || vec_no &gt; 0x2f); register_handler (vec_no, dpl, level, handler, name); } 使用示例（缺页异常）： 1 2 3 4 5 6 7 8 /* exception.c */ void exception_init (void) { /* ... */ intr_register_int (14, 0, INTR_OFF, page_fault, &quot;#PF Page-Fault Exception&quot;); } register_handler() 实现 1 2 3 4 5 6 7 8 9 10 11 12 static void register_handler (uint8_t vec_no, int dpl, enum intr_level level, intr_handler_func *handler, const char *name) { ASSERT (intr_handlers[vec_no] == NULL); if (level == INTR_ON) idt[vec_no] = make_trap_gate (intr_stubs[vec_no], dpl); else idt[vec_no] = make_intr_gate (intr_stubs[vec_no], dpl); intr_handlers[vec_no] = handler; intr_names[vec_no] = name; } 关键选择： INTR_ON：使用陷阱门（不自动关中断）→ 允许中断嵌套 INTR_OFF：使用中断门（自动关中断）→ 禁止中断嵌套 PIC EOI 处理 1 2 3 4 5 6 7 8 9 10 11 12 static void pic_end_of_interrupt (int irq) { ASSERT (irq &gt;= 0x20 &amp;&amp; irq &lt; 0x30); /* Acknowledge master PIC. */ outb (0x20, 0x20); /* Acknowledge slave PIC if this is a slave interrupt. */ if (irq &gt;= 0x28) outb (0xa0, 0x20); } EOI 流程： 1 2 3 4 5 6 7 8 9 10 11 12 IRQ 0-7 (主 PIC): │ └─→ 向主 PIC 发送 EOI outb(0x20, 0x20) IRQ 8-15 (从 PIC): │ ├─→ 向主 PIC 发送 EOI │ outb(0x20, 0x20) │ └─→ 向从 PIC 发送 EOI outb(0xa0, 0x20) 为什么从 PIC 中断需要两个 EOI？ 因为从 PIC 是级联到主 PIC 的 IR2，所以： 从 PIC 需要知道中断处理完成 主 PIC 也需要知道（释放 IR2 线） 常见问题解答 Q1: 为什么需要重映射 PIC？ A: x86 架构规定向量 0-31 用于 CPU 异常 默认 PIC 将 IRQ 0-15 映射到向量 0-15 这与 CPU 异常冲突 重映射到 32-47 避免冲突 Q2: 中断门和陷阱门的实际区别？ A: 中断门：进入时自动 CLI（关中断） 陷阱门：保持中断状态不变 效果：中断门处理程序开始时中断是关闭的 Q3: 为什么外部中断处理要关中断？ A: 防止中断嵌套导致栈溢出 简化中断处理程序的编写 Pintos 的设计选择，不是必须的 Q4: yield_on_return 有什么用？ A: 允许中断处理程序请求线程切换 例如：定时器中断检测到时间片用完 在返回前（而不是中断处理中）切换，保证原子性 练习题 练习1：PIC 重映射验证 修改 pic_init()，将硬件中断映射到向量 64-79，需要修改哪些代码？ 练习2：中断计数器 添加功能，统计每种中断发生的次数，并提供函数查询： 1 unsigned int intr_get_count(uint8_t vec_no); 练习3：理解中断优先级 分析以下场景： CPU 正在处理定时器中断（IRQ0，向量 0x20） 此时键盘产生中断（IRQ1，向量 0x21） 中断会被如何处理？ 练习4：实现中断屏蔽 实现函数来单独屏蔽/解除屏蔽特定 IRQ： 1 2 void irq_mask(int irq); void irq_unmask(int irq); 提示：操作 PIC 的 IMR（中断屏蔽寄存器）。 下一篇预告 在下一篇文档中，我们将详细解析设备初始化过程，了解 Pintos 如何初始化定时器、键盘、串口等硬件设备。 参考资料 Intel 64 and IA-32 Architectures Software Developer’s Manual, Volume 3A - Chapter 6: Interrupt and Exception Handling 8259A Programmable Interrupt Controller Datasheet OSDev Wiki - 8259 PIC OSDev Wiki - Interrupt Descriptor Table" />
+<meta property="og:description" content="Pintos 内核启动（十三）：中断系统初始化 概述 本文档详细解析 Pintos 内核的中断系统初始化过程 intr_init()。中断是操作系统响应外部事件和处理异常的核心机制。正确初始化中断系统是操作系统能够响应硬件事件（如定时器、键盘）和处理软件异常（如除零错误、缺页）的前提。 Pintos 的中断系统涉及以下关键组件： IDT（Interrupt Descriptor Table）：中断描述符表，存储中断处理程序的入口 PIC（Programmable Interrupt Controller）：可编程中断控制器，管理硬件中断 中断处理函数：实际处理中断的 C 代码 原始代码 interrupt.c 中的 intr_init() 函数 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 /** Initializes the interrupt system. */ void intr_init (void) { uint64_t idtr_operand; int i; /* Initialize interrupt controller. */ pic_init (); /* Initialize IDT. */ for (i = 0; i &lt; INTR_CNT; i++) idt[i] = make_intr_gate (intr_stubs[i], 0); /* Load IDT register. See [IA32-v2a] &quot;LIDT&quot; and [IA32-v3a] 5.10 &quot;Interrupt Descriptor Table (IDT)&quot;. */ idtr_operand = make_idtr_operand (sizeof idt - 1, idt); asm volatile (&quot;lidt %0&quot; : : &quot;m&quot; (idtr_operand)); /* Initialize intr_names. */ for (i = 0; i &lt; INTR_CNT; i++) intr_names[i] = &quot;unknown&quot;; intr_names[0] = &quot;#DE Divide Error&quot;; intr_names[1] = &quot;#DB Debug Exception&quot;; intr_names[2] = &quot;NMI Interrupt&quot;; intr_names[3] = &quot;#BP Breakpoint Exception&quot;; intr_names[4] = &quot;#OF Overflow Exception&quot;; intr_names[5] = &quot;#BR BOUND Range Exceeded Exception&quot;; intr_names[6] = &quot;#UD Invalid Opcode Exception&quot;; intr_names[7] = &quot;#NM Device Not Available Exception&quot;; intr_names[8] = &quot;#DF Double Fault Exception&quot;; intr_names[9] = &quot;Coprocessor Segment Overrun&quot;; intr_names[10] = &quot;#TS Invalid TSS Exception&quot;; intr_names[11] = &quot;#NP Segment Not Present&quot;; intr_names[12] = &quot;#SS Stack Fault Exception&quot;; intr_names[13] = &quot;#GP General Protection Exception&quot;; intr_names[14] = &quot;#PF Page-Fault Exception&quot;; intr_names[16] = &quot;#MF x87 FPU Floating-Point Error&quot;; intr_names[17] = &quot;#AC Alignment Check Exception&quot;; intr_names[18] = &quot;#MC Machine-Check Exception&quot;; intr_names[19] = &quot;#XF SIMD Floating-Point Exception&quot;; } pic_init() 函数 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 /** Initializes the PICs. Refer to [8259A] for details. By default, interrupts 0...15 delivered by the PICs will go to interrupt vectors 0...15. Those vectors are also used for CPU traps and exceptions, so we reprogram the PICs so that interrupts 0...15 are delivered to interrupt vectors 32...47 (0x20...0x2f) instead. */ static void pic_init (void) { /* Mask all interrupts on both PICs. */ outb (PIC0_DATA, 0xff); outb (PIC1_DATA, 0xff); /* Initialize master. */ outb (PIC0_CTRL, 0x11); /* ICW1: single mode, edge triggered, expect ICW4. */ outb (PIC0_DATA, 0x20); /* ICW2: line IR0...7 -&gt; irq 0x20...0x27. */ outb (PIC0_DATA, 0x04); /* ICW3: slave PIC on line IR2. */ outb (PIC0_DATA, 0x01); /* ICW4: 8086 mode, normal EOI, non-buffered. */ /* Initialize slave. */ outb (PIC1_CTRL, 0x11); /* ICW1: single mode, edge triggered, expect ICW4. */ outb (PIC1_DATA, 0x28); /* ICW2: line IR0...7 -&gt; irq 0x28...0x2f. */ outb (PIC1_DATA, 0x02); /* ICW3: slave ID is 2. */ outb (PIC1_DATA, 0x01); /* ICW4: 8086 mode, normal EOI, non-buffered. */ /* Unmask all interrupts. */ outb (PIC0_DATA, 0x00); outb (PIC1_DATA, 0x00); } 前置知识 1. x86 中断分类 x86 系统中的中断分为三类： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 中断类型 │ ├─→ 异常（Exceptions）: CPU 内部产生 │ │ │ ├─→ 故障（Faults）: 可恢复，返回到引起故障的指令 │ │ 例：#PF Page Fault, #GP General Protection │ │ │ ├─→ 陷阱（Traps）: 可恢复，返回到下一条指令 │ │ 例：#BP Breakpoint, #OF Overflow │ │ │ └─→ 终止（Aborts）: 不可恢复 │ 例：#DF Double Fault, #MC Machine Check │ ├─→ 软件中断（Software Interrupts）: INT 指令产生 │ 例：INT 0x80 (系统调用) │ └─→ 硬件中断（Hardware Interrupts）: 外部设备产生 │ ├─→ 可屏蔽中断（Maskable）: 通过 PIC 传递 │ 例：定时器、键盘、硬盘 │ └─→ 不可屏蔽中断（NMI）: 直接到达 CPU 例：内存校验错误 2. 中断向量表 x86 支持 256 个中断向量（0-255）： 向量范围 类型 说明 0-19 CPU 异常 由 Intel 定义 20-31 保留 Intel 保留 32-47 硬件中断 重映射后的 IRQ 0-15 48-255 可用 软件中断、系统调用等 3. 8259A PIC 架构 PC 使用两片级联的 8259A PIC： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 ┌─────────────────┐ │ CPU │ │ │ │ INTR ◄────────┼──────┐ └─────────────────┘ │ │ ┌──────────────────────┐ ┌──────┴──────────────┐ │ 外部设备 │ │ Master PIC │ │ │ │ (8259A #0) │ │ IRQ0: 定时器 ───────┼────────────────────┼→ IR0 │ │ IRQ1: 键盘 ─────────┼────────────────────┼→ IR1 │ │ IRQ2: 级联 ─────────┼────────────────────┼→ IR2 ◄─────────────┼──┐ │ IRQ3: COM2 ─────────┼────────────────────┼→ IR3 │ │ │ IRQ4: COM1 ─────────┼────────────────────┼→ IR4 │ │ │ IRQ5: LPT2 ─────────┼────────────────────┼→ IR5 │ │ │ IRQ6: 软盘 ─────────┼────────────────────┼→ IR6 │ │ │ IRQ7: LPT1 ─────────┼────────────────────┼→ IR7 │ │ │ │ └────────────────────┘ │ │ │ │ │ │ ┌────────────────────┐ │ │ │ │ Slave PIC │ │ │ │ │ (8259A #1) │ │ │ IRQ8: RTC ──────────┼────────────────────┼→ IR0 │ │ │ IRQ9: ACPI ─────────┼────────────────────┼→ IR1 │ │ │ IRQ10: 可用 ────────┼────────────────────┼→ IR2 │ │ │ IRQ11: 可用 ────────┼────────────────────┼→ IR3 │ │ │ IRQ12: PS/2鼠标 ────┼────────────────────┼→ IR4 │ │ │ IRQ13: FPU ─────────┼────────────────────┼→ IR5 │ │ │ IRQ14: IDE Primary ─┼────────────────────┼→ IR6 │ │ │ IRQ15: IDE Secondary┼────────────────────┼→ IR7 │ │ │ │ │ INT ────────┼──┘ └──────────────────────┘ └────────────────────┘ 4. IDT 描述符格式 每个 IDT 条目（门描述符）是 8 字节： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 63 48 47 46 45 44 43 40 39 32 +------------------+--+-----+--+------+------------+ | Offset 31:16 |P |DPL |S | Type | Reserved | +------------------+--+-----+--+------+------------+ 31 16 15 0 +------------------+-----------------------------+ | Segment Selector | Offset 15:0 | +------------------+-----------------------------+ 各字段说明： - Offset: 中断处理程序的地址（分成两部分） - P: 存在位（1=有效） - DPL: 描述符特权级（0-3） - S: 系统段（必须为0） - Type: 门类型（14=中断门，15=陷阱门） - Segment Selector: 代码段选择子 5. 中断门 vs 陷阱门 特性 中断门（Interrupt Gate） 陷阱门（Trap Gate） Type 14 (0xE) 15 (0xF) 进入时 自动关中断 (IF=0) 保持中断状态 用途 硬件中断 软件中断、异常 6. 中断帧（Interrupt Frame） 中断发生时 CPU 自动压栈的内容： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 高地址 ┌───────────────────┐ │ SS │ (特权级改变时) ├───────────────────┤ │ ESP │ (特权级改变时) ├───────────────────┤ │ EFLAGS │ ├───────────────────┤ │ CS │ ├───────────────────┤ │ EIP │ ├───────────────────┤ │ Error Code │ (某些异常) ├───────────────────┤ │ (软件压入的) │ │ 寄存器等 │ └───────────────────┘ 低地址 逐行代码解析 intr_init() 函数解析 第1-2行：变量声明 1 2 uint64_t idtr_operand; int i; 详细解析： idtr_operand： 64 位值，存储 IDTR 寄存器的操作数 格式：低 16 位是限制（limit），高 32 位是基址（base） i：循环变量 第3行：初始化 PIC 1 pic_init (); 详细解析： 这是关键的一步，重新配置 8259A PIC。详见下面的 pic_init() 解析。 第4-5行：初始化 IDT 1 2 for (i = 0; i &lt; INTR_CNT; i++) idt[i] = make_intr_gate (intr_stubs[i], 0); 详细解析： INTR_CNT = 256：x86 支持的中断向量数 intr_stubs[]： 中断存根函数数组 在 intr-stubs.S 中定义 每个存根函数负责保存上下文并调用统一的处理函数 make_intr_gate()： 创建中断门描述符 DPL=0 表示只有内核可以触发 初始状态： 所有中断都使用中断门（进入时关中断） 所有中断都没有实际处理程序（后续注册） intr_stubs 示意： # intr-stubs.S 中的代码结构（简化） intr00_stub: push $0 # 假错误码 push $0x00 # 向量号 jmp intr_entry intr01_stub: push $0 # 假错误码 push $0x01 # 向量号 jmp intr_entry # ... 256 个存根函数 ... 第6-8行：加载 IDT 1 2 idtr_operand = make_idtr_operand (sizeof idt - 1, idt); asm volatile (&quot;lidt %0&quot; : : &quot;m&quot; (idtr_operand)); 详细解析： make_idtr_operand()： 1 2 3 4 5 static inline uint64_t make_idtr_operand (uint16_t limit, void *base) { return limit | ((uint64_t) (uint32_t) base &lt;&lt; 16); } 构造 IDTR 操作数格式： 1 2 3 4 63 16 15 0 +--------------------------------+----------------+ | Base Address | Limit | +--------------------------------+----------------+ sizeof idt - 1： IDT 大小为 256 × 8 = 2048 字节 limit = 2048 - 1 = 2047 LIDT 指令： 将 IDT 的位置和大小加载到 IDTR 寄存器 之后 CPU 会使用这个 IDT 处理中断 IDTR 寄存器结构： 1 2 3 4 47 16 15 0 +--------------------------------+----------------+ | IDT Base Address | IDT Limit | +--------------------------------+----------------+ 第9-25行：初始化中断名称 1 2 3 4 5 for (i = 0; i &lt; INTR_CNT; i++) intr_names[i] = &quot;unknown&quot;; intr_names[0] = &quot;#DE Divide Error&quot;; intr_names[1] = &quot;#DB Debug Exception&quot;; // ... 更多中断名称 ... 详细解析： 这些名称用于调试，当发生意外中断时打印友好的信息。 标准 CPU 异常列表： 向量 助记符 名称 类型 错误码 0 #DE Divide Error Fault 无 1 #DB Debug Fault/Trap 无 2 NMI Non-Maskable Interrupt Interrupt 无 3 #BP Breakpoint Trap 无 4 #OF Overflow Trap 无 5 #BR BOUND Range Exceeded Fault 无 6 #UD Invalid Opcode Fault 无 7 #NM Device Not Available Fault 无 8 #DF Double Fault Abort 有(0) 9 - Coprocessor Segment Overrun Fault 无 10 #TS Invalid TSS Fault 有 11 #NP Segment Not Present Fault 有 12 #SS Stack-Segment Fault Fault 有 13 #GP General Protection Fault 有 14 #PF Page Fault Fault 有 15 - Reserved - - 16 #MF x87 FPU Error Fault 无 17 #AC Alignment Check Fault 有(0) 18 #MC Machine Check Abort 无 19 #XF SIMD Floating-Point Fault 无 pic_init() 函数解析 第1-2行：屏蔽所有中断 1 2 outb (PIC0_DATA, 0xff); outb (PIC1_DATA, 0xff); 详细解析： 写入数据端口设置中断屏蔽寄存器（IMR） 0xFF = 11111111b = 屏蔽所有 8 个中断线 防止初始化过程中产生中断 第3-6行：初始化主 PIC 1 2 3 4 outb (PIC0_CTRL, 0x11); /* ICW1 */ outb (PIC0_DATA, 0x20); /* ICW2 */ outb (PIC0_DATA, 0x04); /* ICW3 */ outb (PIC0_DATA, 0x01); /* ICW4 */ ICW（Initialization Command Words）详解： ICW1 (0x11)： 1 2 3 4 5 6 位 7-5: 未使用 位 4: 1 = ICW1 标识 位 3: 0 = 边沿触发 位 2: 0 = 8 字节中断向量间隔 位 1: 0 = 级联模式 位 0: 1 = 需要 ICW4 ICW2 (0x20)： 1 2 3 位 7-3: 向量基址的高 5 位 = 0x20 = 32 位 2-0: 由 PIC 填充 结果：IR0-7 映射到向量 0x20-0x27 ICW3 (0x04)： 1 2 位 2: 1 = IR2 连接从 PIC 其他位: 0 ICW4 (0x01)： 1 2 3 4 位 4: 0 = 非特殊全嵌套模式 位 3-2: 00 = 非缓冲模式 位 1: 0 = 正常 EOI 位 0: 1 = 8086 模式 第7-10行：初始化从 PIC 1 2 3 4 outb (PIC1_CTRL, 0x11); /* ICW1 */ outb (PIC1_DATA, 0x28); /* ICW2: 映射到 0x28-0x2f */ outb (PIC1_DATA, 0x02); /* ICW3: 从 ID = 2 */ outb (PIC1_DATA, 0x01); /* ICW4 */ ICW3 (0x02) 对于从 PIC： 1 位 2-0: 010 = 从 ID 为 2（连接到主 PIC 的 IR2） 第11-12行：取消屏蔽所有中断 1 2 outb (PIC0_DATA, 0x00); outb (PIC1_DATA, 0x00); 详细解析： 0x00 = 00000000b = 允许所有中断 虽然 PIC 不再屏蔽中断，但 CPU 的 IF 标志仍为 0 中断要等到 intr_enable() 才会真正被处理 make_gate() 函数解析 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 static uint64_t make_gate (void (*function) (void), int dpl, int type) { uint32_t e0, e1; ASSERT (function != NULL); ASSERT (dpl &gt;= 0 &amp;&amp; dpl &lt;= 3); ASSERT (type &gt;= 0 &amp;&amp; type &lt;= 15); e0 = (((uint32_t) function &amp; 0xffff) /* Offset 15:0. */ | (SEL_KCSEG &lt;&lt; 16)); /* Target code segment. */ e1 = (((uint32_t) function &amp; 0xffff0000) /* Offset 31:16. */ | (1 &lt;&lt; 15) /* Present. */ | ((uint32_t) dpl &lt;&lt; 13) /* Descriptor privilege level. */ | (0 &lt;&lt; 12) /* System. */ | ((uint32_t) type &lt;&lt; 8)); /* Gate type. */ return e0 | ((uint64_t) e1 &lt;&lt; 32); } 描述符构造图示： 假设 function = 0xC0012345，dpl = 0，type = 14（中断门）： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 e0 构造： ┌────────────────┬────────────────┐ │ SEL_KCSEG │ Offset 15:0 │ │ (0x08) │ (0x2345) │ └────────────────┴────────────────┘ e0 = 0x00082345 e1 构造： ┌────────────────┬─┬──┬─┬────┬────┐ │ Offset 31:16 │P│DPL│S│Type│ 0 │ │ (0xC001) │1│ 0 │0│ E │ │ └────────────────┴─┴──┴─┴────┴────┘ e1 = 0xC0018E00 最终描述符： 63 0 +--------------------------------------------------+ | 0xC0018E00 | 0x00082345 | +--------------------------------------------------+ 中断处理流程 完整的中断处理流程 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 1. 中断发生 │ ├─→ 硬件中断：设备 → PIC → CPU INTR │ └─→ 异常/软中断：CPU 内部产生 2. CPU 响应 │ ├─→ 保存当前状态到栈 │ - EFLAGS, CS, EIP │ - 错误码（如果有） │ - SS, ESP（特权级改变时） │ └─→ 从 IDT 获取处理程序地址 向量号 × 8 + IDT 基址 3. 跳转到中断存根 │ ├─→ intrNN_stub (intr-stubs.S) │ - 压入错误码（如果 CPU 没压入） │ - 压入向量号 │ - 跳转到 intr_entry │ └─→ intr_entry - 保存所有通用寄存器 - 保存段寄存器 - 设置内核数据段 - 调用 intr_handler() 4. C 语言处理 │ └─→ intr_handler (struct intr_frame *frame) │ ├─→ 外部中断？ │ - 设置 in_external_intr = true │ ├─→ 查找并调用注册的处理程序 │ handler = intr_handlers[frame-&gt;vec_no] │ └─→ 外部中断完成处理 - 发送 EOI 到 PIC - 检查是否需要调度 5. 返回 │ └─→ intr_exit (intr-stubs.S) - 恢复段寄存器 - 恢复通用寄存器 - iret 指令返回 intr_handler() 函数详解 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 void intr_handler (struct intr_frame *frame) { bool external; intr_handler_func *handler; /* External interrupts are special. */ external = frame-&gt;vec_no &gt;= 0x20 &amp;&amp; frame-&gt;vec_no &lt; 0x30; if (external) { ASSERT (intr_get_level () == INTR_OFF); ASSERT (!intr_context ()); in_external_intr = true; yield_on_return = false; } /* Invoke the interrupt&#39;s handler. */ handler = intr_handlers[frame-&gt;vec_no]; if (handler != NULL) handler (frame); else if (frame-&gt;vec_no == 0x27 || frame-&gt;vec_no == 0x2f) { /* Spurious interrupt, ignore it. */ } else unexpected_interrupt (frame); /* Complete the processing of an external interrupt. */ if (external) { ASSERT (intr_get_level () == INTR_OFF); ASSERT (intr_context ()); in_external_intr = false; pic_end_of_interrupt (frame-&gt;vec_no); if (yield_on_return) thread_yield (); } } 关键点： 外部中断识别：向量号 0x20-0x2F 是 PIC 重映射后的硬件中断 伪中断（Spurious Interrupt）： IRQ7 (0x27) 和 IRQ15 (0x2f) 可能产生伪中断 由于 PIC 的硬件特性导致 应该忽略而不是报错 EOI（End of Interrupt）： 必须发送 EOI 告知 PIC 中断处理完成 否则 PIC 不会传递后续中断 yield_on_return： 允许中断处理程序请求调度 常用于定时器中断（时间片用完） 中断帧结构 struct intr_frame 详解 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 struct intr_frame { /* 由 intr_entry 压入的寄存器 */ uint32_t edi; /* Saved EDI. */ uint32_t esi; /* Saved ESI. */ uint32_t ebp; /* Saved EBP. */ uint32_t esp_dummy; /* Not used (PUSHA 的 ESP). */ uint32_t ebx; /* Saved EBX. */ uint32_t edx; /* Saved EDX. */ uint32_t ecx; /* Saved ECX. */ uint32_t eax; /* Saved EAX. */ uint16_t gs, :16; /* Saved GS. */ uint16_t fs, :16; /* Saved FS. */ uint16_t es, :16; /* Saved ES. */ uint16_t ds, :16; /* Saved DS. */ /* 由 intrNN_stub 压入 */ uint32_t vec_no; /* Interrupt vector number. */ uint32_t error_code; /* Error code. */ void *frame_pointer; /* Saved EBP (for backtrace). */ /* 由 CPU 压入 */ void (*eip) (void); /* Next instruction. */ uint16_t cs, :16; /* Code segment. */ uint32_t eflags; /* CPU flags. */ void *esp; /* Stack pointer. */ uint16_t ss, :16; /* Stack segment. */ }; 栈布局图： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 中断发生时的栈布局（从高地址到低地址）： ┌─────────────────────────────────┐ 高地址 │ SS │ ← (仅在特权级改变时) ├─────────────────────────────────┤ │ ESP │ ← (仅在特权级改变时) ├─────────────────────────────────┤ │ EFLAGS │ ← CPU 压入 ├─────────────────────────────────┤ │ CS │ ← CPU 压入 ├─────────────────────────────────┤ │ EIP │ ← CPU 压入 ├─────────────────────────────────┤ │ Error Code │ ← CPU/存根 压入 ├─────────────────────────────────┤ │ Frame Pointer │ ← 存根 压入 ├─────────────────────────────────┤ │ vec_no │ ← 存根 压入 ├─────────────────────────────────┤ │ DS │ ← intr_entry 压入 ├─────────────────────────────────┤ │ ES │ ├─────────────────────────────────┤ │ FS │ ├─────────────────────────────────┤ │ GS │ ├─────────────────────────────────┤ │ EAX, ECX, EDX, EBX │ ← PUSHA │ ESP_dummy, EBP, ESI, EDI │ └─────────────────────────────────┘ 低地址 (ESP 指向这里) 中断注册 注册外部中断 1 2 3 4 5 6 7 void intr_register_ext (uint8_t vec_no, intr_handler_func *handler, const char *name) { ASSERT (vec_no &gt;= 0x20 &amp;&amp; vec_no &lt;= 0x2f); register_handler (vec_no, 0, INTR_OFF, handler, name); } 使用示例（定时器）： 1 2 3 4 5 6 7 8 /* timer.c */ void timer_init (void) { /* ... 配置 PIT ... */ intr_register_ext (0x20, timer_interrupt, &quot;8254 Timer&quot;); } 注册内部中断 1 2 3 4 5 6 7 void intr_register_int (uint8_t vec_no, int dpl, enum intr_level level, intr_handler_func *handler, const char *name) { ASSERT (vec_no &lt; 0x20 || vec_no &gt; 0x2f); register_handler (vec_no, dpl, level, handler, name); } 使用示例（缺页异常）： 1 2 3 4 5 6 7 8 /* exception.c */ void exception_init (void) { /* ... */ intr_register_int (14, 0, INTR_OFF, page_fault, &quot;#PF Page-Fault Exception&quot;); } register_handler() 实现 1 2 3 4 5 6 7 8 9 10 11 12 static void register_handler (uint8_t vec_no, int dpl, enum intr_level level, intr_handler_func *handler, const char *name) { ASSERT (intr_handlers[vec_no] == NULL); if (level == INTR_ON) idt[vec_no] = make_trap_gate (intr_stubs[vec_no], dpl); else idt[vec_no] = make_intr_gate (intr_stubs[vec_no], dpl); intr_handlers[vec_no] = handler; intr_names[vec_no] = name; } 关键选择： INTR_ON：使用陷阱门（不自动关中断）→ 允许中断嵌套 INTR_OFF：使用中断门（自动关中断）→ 禁止中断嵌套 PIC EOI 处理 1 2 3 4 5 6 7 8 9 10 11 12 static void pic_end_of_interrupt (int irq) { ASSERT (irq &gt;= 0x20 &amp;&amp; irq &lt; 0x30); /* Acknowledge master PIC. */ outb (0x20, 0x20); /* Acknowledge slave PIC if this is a slave interrupt. */ if (irq &gt;= 0x28) outb (0xa0, 0x20); } EOI 流程： 1 2 3 4 5 6 7 8 9 10 11 12 IRQ 0-7 (主 PIC): │ └─→ 向主 PIC 发送 EOI outb(0x20, 0x20) IRQ 8-15 (从 PIC): │ ├─→ 向主 PIC 发送 EOI │ outb(0x20, 0x20) │ └─→ 向从 PIC 发送 EOI outb(0xa0, 0x20) 为什么从 PIC 中断需要两个 EOI？ 因为从 PIC 是级联到主 PIC 的 IR2，所以： 从 PIC 需要知道中断处理完成 主 PIC 也需要知道（释放 IR2 线） 常见问题解答 Q1: 为什么需要重映射 PIC？ A: x86 架构规定向量 0-31 用于 CPU 异常 默认 PIC 将 IRQ 0-15 映射到向量 0-15 这与 CPU 异常冲突 重映射到 32-47 避免冲突 Q2: 中断门和陷阱门的实际区别？ A: 中断门：进入时自动 CLI（关中断） 陷阱门：保持中断状态不变 效果：中断门处理程序开始时中断是关闭的 Q3: 为什么外部中断处理要关中断？ A: 防止中断嵌套导致栈溢出 简化中断处理程序的编写 Pintos 的设计选择，不是必须的 Q4: yield_on_return 有什么用？ A: 允许中断处理程序请求线程切换 例如：定时器中断检测到时间片用完 在返回前（而不是中断处理中）切换，保证原子性 练习题 练习1：PIC 重映射验证 修改 pic_init()，将硬件中断映射到向量 64-79，需要修改哪些代码？ 练习2：中断计数器 添加功能，统计每种中断发生的次数，并提供函数查询： 1 unsigned int intr_get_count(uint8_t vec_no); 练习3：理解中断优先级 分析以下场景： CPU 正在处理定时器中断（IRQ0，向量 0x20） 此时键盘产生中断（IRQ1，向量 0x21） 中断会被如何处理？ 练习4：实现中断屏蔽 实现函数来单独屏蔽/解除屏蔽特定 IRQ： 1 2 void irq_mask(int irq); void irq_unmask(int irq); 提示：操作 PIC 的 IMR（中断屏蔽寄存器）。 下一篇预告 在下一篇文档中，我们将详细解析设备初始化过程，了解 Pintos 如何初始化定时器、键盘、串口等硬件设备。 参考资料 Intel 64 and IA-32 Architectures Software Developer’s Manual, Volume 3A - Chapter 6: Interrupt and Exception Handling 8259A Programmable Interrupt Controller Datasheet OSDev Wiki - 8259 PIC OSDev Wiki - Interrupt Descriptor Table" />
+<link rel="canonical" href="http://localhost:4000/posts/pintos-kernel-13-interrupt-init/" />
+<meta property="og:url" content="http://localhost:4000/posts/pintos-kernel-13-interrupt-init/" />
+<meta property="og:site_name" content="Zxsheather" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-01-22T00:00:00+08:00" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Pintos Kernel 13 Interrupt Init" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2026-01-22T00:00:00+08:00","datePublished":"2026-01-22T00:00:00+08:00","description":"Pintos 内核启动（十三）：中断系统初始化 概述 本文档详细解析 Pintos 内核的中断系统初始化过程 intr_init()。中断是操作系统响应外部事件和处理异常的核心机制。正确初始化中断系统是操作系统能够响应硬件事件（如定时器、键盘）和处理软件异常（如除零错误、缺页）的前提。 Pintos 的中断系统涉及以下关键组件： IDT（Interrupt Descriptor Table）：中断描述符表，存储中断处理程序的入口 PIC（Programmable Interrupt Controller）：可编程中断控制器，管理硬件中断 中断处理函数：实际处理中断的 C 代码 原始代码 interrupt.c 中的 intr_init() 函数 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 /** Initializes the interrupt system. */ void intr_init (void) { uint64_t idtr_operand; int i; /* Initialize interrupt controller. */ pic_init (); /* Initialize IDT. */ for (i = 0; i &lt; INTR_CNT; i++) idt[i] = make_intr_gate (intr_stubs[i], 0); /* Load IDT register. See [IA32-v2a] &quot;LIDT&quot; and [IA32-v3a] 5.10 &quot;Interrupt Descriptor Table (IDT)&quot;. */ idtr_operand = make_idtr_operand (sizeof idt - 1, idt); asm volatile (&quot;lidt %0&quot; : : &quot;m&quot; (idtr_operand)); /* Initialize intr_names. */ for (i = 0; i &lt; INTR_CNT; i++) intr_names[i] = &quot;unknown&quot;; intr_names[0] = &quot;#DE Divide Error&quot;; intr_names[1] = &quot;#DB Debug Exception&quot;; intr_names[2] = &quot;NMI Interrupt&quot;; intr_names[3] = &quot;#BP Breakpoint Exception&quot;; intr_names[4] = &quot;#OF Overflow Exception&quot;; intr_names[5] = &quot;#BR BOUND Range Exceeded Exception&quot;; intr_names[6] = &quot;#UD Invalid Opcode Exception&quot;; intr_names[7] = &quot;#NM Device Not Available Exception&quot;; intr_names[8] = &quot;#DF Double Fault Exception&quot;; intr_names[9] = &quot;Coprocessor Segment Overrun&quot;; intr_names[10] = &quot;#TS Invalid TSS Exception&quot;; intr_names[11] = &quot;#NP Segment Not Present&quot;; intr_names[12] = &quot;#SS Stack Fault Exception&quot;; intr_names[13] = &quot;#GP General Protection Exception&quot;; intr_names[14] = &quot;#PF Page-Fault Exception&quot;; intr_names[16] = &quot;#MF x87 FPU Floating-Point Error&quot;; intr_names[17] = &quot;#AC Alignment Check Exception&quot;; intr_names[18] = &quot;#MC Machine-Check Exception&quot;; intr_names[19] = &quot;#XF SIMD Floating-Point Exception&quot;; } pic_init() 函数 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 /** Initializes the PICs. Refer to [8259A] for details. By default, interrupts 0...15 delivered by the PICs will go to interrupt vectors 0...15. Those vectors are also used for CPU traps and exceptions, so we reprogram the PICs so that interrupts 0...15 are delivered to interrupt vectors 32...47 (0x20...0x2f) instead. */ static void pic_init (void) { /* Mask all interrupts on both PICs. */ outb (PIC0_DATA, 0xff); outb (PIC1_DATA, 0xff); /* Initialize master. */ outb (PIC0_CTRL, 0x11); /* ICW1: single mode, edge triggered, expect ICW4. */ outb (PIC0_DATA, 0x20); /* ICW2: line IR0...7 -&gt; irq 0x20...0x27. */ outb (PIC0_DATA, 0x04); /* ICW3: slave PIC on line IR2. */ outb (PIC0_DATA, 0x01); /* ICW4: 8086 mode, normal EOI, non-buffered. */ /* Initialize slave. */ outb (PIC1_CTRL, 0x11); /* ICW1: single mode, edge triggered, expect ICW4. */ outb (PIC1_DATA, 0x28); /* ICW2: line IR0...7 -&gt; irq 0x28...0x2f. */ outb (PIC1_DATA, 0x02); /* ICW3: slave ID is 2. */ outb (PIC1_DATA, 0x01); /* ICW4: 8086 mode, normal EOI, non-buffered. */ /* Unmask all interrupts. */ outb (PIC0_DATA, 0x00); outb (PIC1_DATA, 0x00); } 前置知识 1. x86 中断分类 x86 系统中的中断分为三类： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 中断类型 │ ├─→ 异常（Exceptions）: CPU 内部产生 │ │ │ ├─→ 故障（Faults）: 可恢复，返回到引起故障的指令 │ │ 例：#PF Page Fault, #GP General Protection │ │ │ ├─→ 陷阱（Traps）: 可恢复，返回到下一条指令 │ │ 例：#BP Breakpoint, #OF Overflow │ │ │ └─→ 终止（Aborts）: 不可恢复 │ 例：#DF Double Fault, #MC Machine Check │ ├─→ 软件中断（Software Interrupts）: INT 指令产生 │ 例：INT 0x80 (系统调用) │ └─→ 硬件中断（Hardware Interrupts）: 外部设备产生 │ ├─→ 可屏蔽中断（Maskable）: 通过 PIC 传递 │ 例：定时器、键盘、硬盘 │ └─→ 不可屏蔽中断（NMI）: 直接到达 CPU 例：内存校验错误 2. 中断向量表 x86 支持 256 个中断向量（0-255）： 向量范围 类型 说明 0-19 CPU 异常 由 Intel 定义 20-31 保留 Intel 保留 32-47 硬件中断 重映射后的 IRQ 0-15 48-255 可用 软件中断、系统调用等 3. 8259A PIC 架构 PC 使用两片级联的 8259A PIC： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 ┌─────────────────┐ │ CPU │ │ │ │ INTR ◄────────┼──────┐ └─────────────────┘ │ │ ┌──────────────────────┐ ┌──────┴──────────────┐ │ 外部设备 │ │ Master PIC │ │ │ │ (8259A #0) │ │ IRQ0: 定时器 ───────┼────────────────────┼→ IR0 │ │ IRQ1: 键盘 ─────────┼────────────────────┼→ IR1 │ │ IRQ2: 级联 ─────────┼────────────────────┼→ IR2 ◄─────────────┼──┐ │ IRQ3: COM2 ─────────┼────────────────────┼→ IR3 │ │ │ IRQ4: COM1 ─────────┼────────────────────┼→ IR4 │ │ │ IRQ5: LPT2 ─────────┼────────────────────┼→ IR5 │ │ │ IRQ6: 软盘 ─────────┼────────────────────┼→ IR6 │ │ │ IRQ7: LPT1 ─────────┼────────────────────┼→ IR7 │ │ │ │ └────────────────────┘ │ │ │ │ │ │ ┌────────────────────┐ │ │ │ │ Slave PIC │ │ │ │ │ (8259A #1) │ │ │ IRQ8: RTC ──────────┼────────────────────┼→ IR0 │ │ │ IRQ9: ACPI ─────────┼────────────────────┼→ IR1 │ │ │ IRQ10: 可用 ────────┼────────────────────┼→ IR2 │ │ │ IRQ11: 可用 ────────┼────────────────────┼→ IR3 │ │ │ IRQ12: PS/2鼠标 ────┼────────────────────┼→ IR4 │ │ │ IRQ13: FPU ─────────┼────────────────────┼→ IR5 │ │ │ IRQ14: IDE Primary ─┼────────────────────┼→ IR6 │ │ │ IRQ15: IDE Secondary┼────────────────────┼→ IR7 │ │ │ │ │ INT ────────┼──┘ └──────────────────────┘ └────────────────────┘ 4. IDT 描述符格式 每个 IDT 条目（门描述符）是 8 字节： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 63 48 47 46 45 44 43 40 39 32 +------------------+--+-----+--+------+------------+ | Offset 31:16 |P |DPL |S | Type | Reserved | +------------------+--+-----+--+------+------------+ 31 16 15 0 +------------------+-----------------------------+ | Segment Selector | Offset 15:0 | +------------------+-----------------------------+ 各字段说明： - Offset: 中断处理程序的地址（分成两部分） - P: 存在位（1=有效） - DPL: 描述符特权级（0-3） - S: 系统段（必须为0） - Type: 门类型（14=中断门，15=陷阱门） - Segment Selector: 代码段选择子 5. 中断门 vs 陷阱门 特性 中断门（Interrupt Gate） 陷阱门（Trap Gate） Type 14 (0xE) 15 (0xF) 进入时 自动关中断 (IF=0) 保持中断状态 用途 硬件中断 软件中断、异常 6. 中断帧（Interrupt Frame） 中断发生时 CPU 自动压栈的内容： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 高地址 ┌───────────────────┐ │ SS │ (特权级改变时) ├───────────────────┤ │ ESP │ (特权级改变时) ├───────────────────┤ │ EFLAGS │ ├───────────────────┤ │ CS │ ├───────────────────┤ │ EIP │ ├───────────────────┤ │ Error Code │ (某些异常) ├───────────────────┤ │ (软件压入的) │ │ 寄存器等 │ └───────────────────┘ 低地址 逐行代码解析 intr_init() 函数解析 第1-2行：变量声明 1 2 uint64_t idtr_operand; int i; 详细解析： idtr_operand： 64 位值，存储 IDTR 寄存器的操作数 格式：低 16 位是限制（limit），高 32 位是基址（base） i：循环变量 第3行：初始化 PIC 1 pic_init (); 详细解析： 这是关键的一步，重新配置 8259A PIC。详见下面的 pic_init() 解析。 第4-5行：初始化 IDT 1 2 for (i = 0; i &lt; INTR_CNT; i++) idt[i] = make_intr_gate (intr_stubs[i], 0); 详细解析： INTR_CNT = 256：x86 支持的中断向量数 intr_stubs[]： 中断存根函数数组 在 intr-stubs.S 中定义 每个存根函数负责保存上下文并调用统一的处理函数 make_intr_gate()： 创建中断门描述符 DPL=0 表示只有内核可以触发 初始状态： 所有中断都使用中断门（进入时关中断） 所有中断都没有实际处理程序（后续注册） intr_stubs 示意： # intr-stubs.S 中的代码结构（简化） intr00_stub: push $0 # 假错误码 push $0x00 # 向量号 jmp intr_entry intr01_stub: push $0 # 假错误码 push $0x01 # 向量号 jmp intr_entry # ... 256 个存根函数 ... 第6-8行：加载 IDT 1 2 idtr_operand = make_idtr_operand (sizeof idt - 1, idt); asm volatile (&quot;lidt %0&quot; : : &quot;m&quot; (idtr_operand)); 详细解析： make_idtr_operand()： 1 2 3 4 5 static inline uint64_t make_idtr_operand (uint16_t limit, void *base) { return limit | ((uint64_t) (uint32_t) base &lt;&lt; 16); } 构造 IDTR 操作数格式： 1 2 3 4 63 16 15 0 +--------------------------------+----------------+ | Base Address | Limit | +--------------------------------+----------------+ sizeof idt - 1： IDT 大小为 256 × 8 = 2048 字节 limit = 2048 - 1 = 2047 LIDT 指令： 将 IDT 的位置和大小加载到 IDTR 寄存器 之后 CPU 会使用这个 IDT 处理中断 IDTR 寄存器结构： 1 2 3 4 47 16 15 0 +--------------------------------+----------------+ | IDT Base Address | IDT Limit | +--------------------------------+----------------+ 第9-25行：初始化中断名称 1 2 3 4 5 for (i = 0; i &lt; INTR_CNT; i++) intr_names[i] = &quot;unknown&quot;; intr_names[0] = &quot;#DE Divide Error&quot;; intr_names[1] = &quot;#DB Debug Exception&quot;; // ... 更多中断名称 ... 详细解析： 这些名称用于调试，当发生意外中断时打印友好的信息。 标准 CPU 异常列表： 向量 助记符 名称 类型 错误码 0 #DE Divide Error Fault 无 1 #DB Debug Fault/Trap 无 2 NMI Non-Maskable Interrupt Interrupt 无 3 #BP Breakpoint Trap 无 4 #OF Overflow Trap 无 5 #BR BOUND Range Exceeded Fault 无 6 #UD Invalid Opcode Fault 无 7 #NM Device Not Available Fault 无 8 #DF Double Fault Abort 有(0) 9 - Coprocessor Segment Overrun Fault 无 10 #TS Invalid TSS Fault 有 11 #NP Segment Not Present Fault 有 12 #SS Stack-Segment Fault Fault 有 13 #GP General Protection Fault 有 14 #PF Page Fault Fault 有 15 - Reserved - - 16 #MF x87 FPU Error Fault 无 17 #AC Alignment Check Fault 有(0) 18 #MC Machine Check Abort 无 19 #XF SIMD Floating-Point Fault 无 pic_init() 函数解析 第1-2行：屏蔽所有中断 1 2 outb (PIC0_DATA, 0xff); outb (PIC1_DATA, 0xff); 详细解析： 写入数据端口设置中断屏蔽寄存器（IMR） 0xFF = 11111111b = 屏蔽所有 8 个中断线 防止初始化过程中产生中断 第3-6行：初始化主 PIC 1 2 3 4 outb (PIC0_CTRL, 0x11); /* ICW1 */ outb (PIC0_DATA, 0x20); /* ICW2 */ outb (PIC0_DATA, 0x04); /* ICW3 */ outb (PIC0_DATA, 0x01); /* ICW4 */ ICW（Initialization Command Words）详解： ICW1 (0x11)： 1 2 3 4 5 6 位 7-5: 未使用 位 4: 1 = ICW1 标识 位 3: 0 = 边沿触发 位 2: 0 = 8 字节中断向量间隔 位 1: 0 = 级联模式 位 0: 1 = 需要 ICW4 ICW2 (0x20)： 1 2 3 位 7-3: 向量基址的高 5 位 = 0x20 = 32 位 2-0: 由 PIC 填充 结果：IR0-7 映射到向量 0x20-0x27 ICW3 (0x04)： 1 2 位 2: 1 = IR2 连接从 PIC 其他位: 0 ICW4 (0x01)： 1 2 3 4 位 4: 0 = 非特殊全嵌套模式 位 3-2: 00 = 非缓冲模式 位 1: 0 = 正常 EOI 位 0: 1 = 8086 模式 第7-10行：初始化从 PIC 1 2 3 4 outb (PIC1_CTRL, 0x11); /* ICW1 */ outb (PIC1_DATA, 0x28); /* ICW2: 映射到 0x28-0x2f */ outb (PIC1_DATA, 0x02); /* ICW3: 从 ID = 2 */ outb (PIC1_DATA, 0x01); /* ICW4 */ ICW3 (0x02) 对于从 PIC： 1 位 2-0: 010 = 从 ID 为 2（连接到主 PIC 的 IR2） 第11-12行：取消屏蔽所有中断 1 2 outb (PIC0_DATA, 0x00); outb (PIC1_DATA, 0x00); 详细解析： 0x00 = 00000000b = 允许所有中断 虽然 PIC 不再屏蔽中断，但 CPU 的 IF 标志仍为 0 中断要等到 intr_enable() 才会真正被处理 make_gate() 函数解析 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 static uint64_t make_gate (void (*function) (void), int dpl, int type) { uint32_t e0, e1; ASSERT (function != NULL); ASSERT (dpl &gt;= 0 &amp;&amp; dpl &lt;= 3); ASSERT (type &gt;= 0 &amp;&amp; type &lt;= 15); e0 = (((uint32_t) function &amp; 0xffff) /* Offset 15:0. */ | (SEL_KCSEG &lt;&lt; 16)); /* Target code segment. */ e1 = (((uint32_t) function &amp; 0xffff0000) /* Offset 31:16. */ | (1 &lt;&lt; 15) /* Present. */ | ((uint32_t) dpl &lt;&lt; 13) /* Descriptor privilege level. */ | (0 &lt;&lt; 12) /* System. */ | ((uint32_t) type &lt;&lt; 8)); /* Gate type. */ return e0 | ((uint64_t) e1 &lt;&lt; 32); } 描述符构造图示： 假设 function = 0xC0012345，dpl = 0，type = 14（中断门）： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 e0 构造： ┌────────────────┬────────────────┐ │ SEL_KCSEG │ Offset 15:0 │ │ (0x08) │ (0x2345) │ └────────────────┴────────────────┘ e0 = 0x00082345 e1 构造： ┌────────────────┬─┬──┬─┬────┬────┐ │ Offset 31:16 │P│DPL│S│Type│ 0 │ │ (0xC001) │1│ 0 │0│ E │ │ └────────────────┴─┴──┴─┴────┴────┘ e1 = 0xC0018E00 最终描述符： 63 0 +--------------------------------------------------+ | 0xC0018E00 | 0x00082345 | +--------------------------------------------------+ 中断处理流程 完整的中断处理流程 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 1. 中断发生 │ ├─→ 硬件中断：设备 → PIC → CPU INTR │ └─→ 异常/软中断：CPU 内部产生 2. CPU 响应 │ ├─→ 保存当前状态到栈 │ - EFLAGS, CS, EIP │ - 错误码（如果有） │ - SS, ESP（特权级改变时） │ └─→ 从 IDT 获取处理程序地址 向量号 × 8 + IDT 基址 3. 跳转到中断存根 │ ├─→ intrNN_stub (intr-stubs.S) │ - 压入错误码（如果 CPU 没压入） │ - 压入向量号 │ - 跳转到 intr_entry │ └─→ intr_entry - 保存所有通用寄存器 - 保存段寄存器 - 设置内核数据段 - 调用 intr_handler() 4. C 语言处理 │ └─→ intr_handler (struct intr_frame *frame) │ ├─→ 外部中断？ │ - 设置 in_external_intr = true │ ├─→ 查找并调用注册的处理程序 │ handler = intr_handlers[frame-&gt;vec_no] │ └─→ 外部中断完成处理 - 发送 EOI 到 PIC - 检查是否需要调度 5. 返回 │ └─→ intr_exit (intr-stubs.S) - 恢复段寄存器 - 恢复通用寄存器 - iret 指令返回 intr_handler() 函数详解 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 void intr_handler (struct intr_frame *frame) { bool external; intr_handler_func *handler; /* External interrupts are special. */ external = frame-&gt;vec_no &gt;= 0x20 &amp;&amp; frame-&gt;vec_no &lt; 0x30; if (external) { ASSERT (intr_get_level () == INTR_OFF); ASSERT (!intr_context ()); in_external_intr = true; yield_on_return = false; } /* Invoke the interrupt&#39;s handler. */ handler = intr_handlers[frame-&gt;vec_no]; if (handler != NULL) handler (frame); else if (frame-&gt;vec_no == 0x27 || frame-&gt;vec_no == 0x2f) { /* Spurious interrupt, ignore it. */ } else unexpected_interrupt (frame); /* Complete the processing of an external interrupt. */ if (external) { ASSERT (intr_get_level () == INTR_OFF); ASSERT (intr_context ()); in_external_intr = false; pic_end_of_interrupt (frame-&gt;vec_no); if (yield_on_return) thread_yield (); } } 关键点： 外部中断识别：向量号 0x20-0x2F 是 PIC 重映射后的硬件中断 伪中断（Spurious Interrupt）： IRQ7 (0x27) 和 IRQ15 (0x2f) 可能产生伪中断 由于 PIC 的硬件特性导致 应该忽略而不是报错 EOI（End of Interrupt）： 必须发送 EOI 告知 PIC 中断处理完成 否则 PIC 不会传递后续中断 yield_on_return： 允许中断处理程序请求调度 常用于定时器中断（时间片用完） 中断帧结构 struct intr_frame 详解 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 struct intr_frame { /* 由 intr_entry 压入的寄存器 */ uint32_t edi; /* Saved EDI. */ uint32_t esi; /* Saved ESI. */ uint32_t ebp; /* Saved EBP. */ uint32_t esp_dummy; /* Not used (PUSHA 的 ESP). */ uint32_t ebx; /* Saved EBX. */ uint32_t edx; /* Saved EDX. */ uint32_t ecx; /* Saved ECX. */ uint32_t eax; /* Saved EAX. */ uint16_t gs, :16; /* Saved GS. */ uint16_t fs, :16; /* Saved FS. */ uint16_t es, :16; /* Saved ES. */ uint16_t ds, :16; /* Saved DS. */ /* 由 intrNN_stub 压入 */ uint32_t vec_no; /* Interrupt vector number. */ uint32_t error_code; /* Error code. */ void *frame_pointer; /* Saved EBP (for backtrace). */ /* 由 CPU 压入 */ void (*eip) (void); /* Next instruction. */ uint16_t cs, :16; /* Code segment. */ uint32_t eflags; /* CPU flags. */ void *esp; /* Stack pointer. */ uint16_t ss, :16; /* Stack segment. */ }; 栈布局图： 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 中断发生时的栈布局（从高地址到低地址）： ┌─────────────────────────────────┐ 高地址 │ SS │ ← (仅在特权级改变时) ├─────────────────────────────────┤ │ ESP │ ← (仅在特权级改变时) ├─────────────────────────────────┤ │ EFLAGS │ ← CPU 压入 ├─────────────────────────────────┤ │ CS │ ← CPU 压入 ├─────────────────────────────────┤ │ EIP │ ← CPU 压入 ├─────────────────────────────────┤ │ Error Code │ ← CPU/存根 压入 ├─────────────────────────────────┤ │ Frame Pointer │ ← 存根 压入 ├─────────────────────────────────┤ │ vec_no │ ← 存根 压入 ├─────────────────────────────────┤ │ DS │ ← intr_entry 压入 ├─────────────────────────────────┤ │ ES │ ├─────────────────────────────────┤ │ FS │ ├─────────────────────────────────┤ │ GS │ ├─────────────────────────────────┤ │ EAX, ECX, EDX, EBX │ ← PUSHA │ ESP_dummy, EBP, ESI, EDI │ └─────────────────────────────────┘ 低地址 (ESP 指向这里) 中断注册 注册外部中断 1 2 3 4 5 6 7 void intr_register_ext (uint8_t vec_no, intr_handler_func *handler, const char *name) { ASSERT (vec_no &gt;= 0x20 &amp;&amp; vec_no &lt;= 0x2f); register_handler (vec_no, 0, INTR_OFF, handler, name); } 使用示例（定时器）： 1 2 3 4 5 6 7 8 /* timer.c */ void timer_init (void) { /* ... 配置 PIT ... */ intr_register_ext (0x20, timer_interrupt, &quot;8254 Timer&quot;); } 注册内部中断 1 2 3 4 5 6 7 void intr_register_int (uint8_t vec_no, int dpl, enum intr_level level, intr_handler_func *handler, const char *name) { ASSERT (vec_no &lt; 0x20 || vec_no &gt; 0x2f); register_handler (vec_no, dpl, level, handler, name); } 使用示例（缺页异常）： 1 2 3 4 5 6 7 8 /* exception.c */ void exception_init (void) { /* ... */ intr_register_int (14, 0, INTR_OFF, page_fault, &quot;#PF Page-Fault Exception&quot;); } register_handler() 实现 1 2 3 4 5 6 7 8 9 10 11 12 static void register_handler (uint8_t vec_no, int dpl, enum intr_level level, intr_handler_func *handler, const char *name) { ASSERT (intr_handlers[vec_no] == NULL); if (level == INTR_ON) idt[vec_no] = make_trap_gate (intr_stubs[vec_no], dpl); else idt[vec_no] = make_intr_gate (intr_stubs[vec_no], dpl); intr_handlers[vec_no] = handler; intr_names[vec_no] = name; } 关键选择： INTR_ON：使用陷阱门（不自动关中断）→ 允许中断嵌套 INTR_OFF：使用中断门（自动关中断）→ 禁止中断嵌套 PIC EOI 处理 1 2 3 4 5 6 7 8 9 10 11 12 static void pic_end_of_interrupt (int irq) { ASSERT (irq &gt;= 0x20 &amp;&amp; irq &lt; 0x30); /* Acknowledge master PIC. */ outb (0x20, 0x20); /* Acknowledge slave PIC if this is a slave interrupt. */ if (irq &gt;= 0x28) outb (0xa0, 0x20); } EOI 流程： 1 2 3 4 5 6 7 8 9 10 11 12 IRQ 0-7 (主 PIC): │ └─→ 向主 PIC 发送 EOI outb(0x20, 0x20) IRQ 8-15 (从 PIC): │ ├─→ 向主 PIC 发送 EOI │ outb(0x20, 0x20) │ └─→ 向从 PIC 发送 EOI outb(0xa0, 0x20) 为什么从 PIC 中断需要两个 EOI？ 因为从 PIC 是级联到主 PIC 的 IR2，所以： 从 PIC 需要知道中断处理完成 主 PIC 也需要知道（释放 IR2 线） 常见问题解答 Q1: 为什么需要重映射 PIC？ A: x86 架构规定向量 0-31 用于 CPU 异常 默认 PIC 将 IRQ 0-15 映射到向量 0-15 这与 CPU 异常冲突 重映射到 32-47 避免冲突 Q2: 中断门和陷阱门的实际区别？ A: 中断门：进入时自动 CLI（关中断） 陷阱门：保持中断状态不变 效果：中断门处理程序开始时中断是关闭的 Q3: 为什么外部中断处理要关中断？ A: 防止中断嵌套导致栈溢出 简化中断处理程序的编写 Pintos 的设计选择，不是必须的 Q4: yield_on_return 有什么用？ A: 允许中断处理程序请求线程切换 例如：定时器中断检测到时间片用完 在返回前（而不是中断处理中）切换，保证原子性 练习题 练习1：PIC 重映射验证 修改 pic_init()，将硬件中断映射到向量 64-79，需要修改哪些代码？ 练习2：中断计数器 添加功能，统计每种中断发生的次数，并提供函数查询： 1 unsigned int intr_get_count(uint8_t vec_no); 练习3：理解中断优先级 分析以下场景： CPU 正在处理定时器中断（IRQ0，向量 0x20） 此时键盘产生中断（IRQ1，向量 0x21） 中断会被如何处理？ 练习4：实现中断屏蔽 实现函数来单独屏蔽/解除屏蔽特定 IRQ： 1 2 void irq_mask(int irq); void irq_unmask(int irq); 提示：操作 PIC 的 IMR（中断屏蔽寄存器）。 下一篇预告 在下一篇文档中，我们将详细解析设备初始化过程，了解 Pintos 如何初始化定时器、键盘、串口等硬件设备。 参考资料 Intel 64 and IA-32 Architectures Software Developer’s Manual, Volume 3A - Chapter 6: Interrupt and Exception Handling 8259A Programmable Interrupt Controller Datasheet OSDev Wiki - 8259 PIC OSDev Wiki - Interrupt Descriptor Table","headline":"Pintos Kernel 13 Interrupt Init","mainEntityOfPage":{"@type":"WebPage","@id":"http://localhost:4000/posts/pintos-kernel-13-interrupt-init/"},"url":"http://localhost:4000/posts/pintos-kernel-13-interrupt-init/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+  <title>Pintos Kernel 13 Interrupt Init | Zxsheather
+  </title>
+
+  <!--
+  The Favicons for Web, Android, Microsoft, and iOS (iPhone and iPad) Apps
+  Generated by: https://realfavicongenerator.net/
+-->
+
+
+
+<link rel="icon" type="image/png" href="/assets/img/favicons/favicon-96x96.png" sizes="96x96">
+<link rel="icon" type="image/svg+xml" href="/assets/img/favicons/favicon.svg">
+<link rel="shortcut icon" href="/assets/img/favicons/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/img/favicons/apple-touch-icon.png">
+
+  <link rel="manifest" href="/assets/img/favicons/site.webmanifest">
+
+
+
+  <!-- Resource Hints -->
+  
+    
+      
+        <link rel="preconnect" href="https://fonts.googleapis.com" >
+      
+        <link rel="dns-prefetch" href="https://fonts.googleapis.com" >
+      
+    
+      
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+      
+        <link rel="dns-prefetch" href="https://fonts.gstatic.com" >
+      
+    
+      
+        <link rel="preconnect" href="https://cdn.jsdelivr.net" >
+      
+        <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" >
+      
+    
+  
+
+  <!-- Bootstrap -->
+  
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css">
+  
+
+  <!-- Theme style -->
+  <link rel="stylesheet" href="/assets/css/jekyll-theme-chirpy.css">
+
+  <!-- Web Font -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400&family=Source+Sans+Pro:wght@400;600;700;900&display=swap">
+
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css">
+
+  <!-- 3rd-party Dependencies -->
+
+  
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tocbot@4.36.4/dist/tocbot.min.css">
+  
+
+  
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/loading-attribute-polyfill@2.1.1/dist/loading-attribute-polyfill.min.css">
+  
+
+  
+    <!-- Image Popup -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/glightbox@3.3.0/dist/css/glightbox.min.css">
+  
+
+  <!-- Scripts -->
+
+  <script src="/assets/js/dist/theme.min.js"></script>
+
+  <!-- JS selector for site. -->
+
+<!-- commons -->
+
+
+
+<!-- layout specified -->
+
+
+  
+
+  
+    <!-- image lazy-loading & popup & clipboard -->
+    
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    
+
+    
+
+  
+
+  
+    
+
+    
+
+  
+
+  
+    
+
+    
+
+  
+
+  
+    
+
+    
+
+  
+
+  
+    
+
+    
+
+  
+
+  
+    
+
+    
+
+  
+
+  
+    
+
+    
+
+  
+
+  
+    
+
+    
+
+  
+
+  
+    
+
+    
+
+  
+
+
+
+  <script defer src="https://cdn.jsdelivr.net/combine/npm/simple-jekyll-search@1.10.0/dest/simple-jekyll-search.min.js,npm/loading-attribute-polyfill@2.1.1/dist/loading-attribute-polyfill.umd.min.js,npm/glightbox@3.3.0/dist/js/glightbox.min.js,npm/clipboard@2.0.11/dist/clipboard.min.js,npm/dayjs@1.11.18/dayjs.min.js,npm/dayjs@1.11.18/locale/zh.js,npm/dayjs@1.11.18/plugin/relativeTime.js,npm/dayjs@1.11.18/plugin/localizedFormat.js,npm/tocbot@4.36.4/dist/tocbot.min.js"></script>
+
+
+
+
+
+
+
+<script defer src="/assets/js/dist/post.min.js"></script>
+
+
+
+<!-- Pageviews -->
+
+  
+
+  
+
+
+
+  
+
+  <!-- A placeholder to allow defining custom metadata -->
+
+</head>
+
+
+  <body>
+    <!-- The Side Bar -->
+
+<aside aria-label="Sidebar" id="sidebar" class="d-flex flex-column align-items-end">
+  <header class="profile-wrapper">
+    <a href="/" id="avatar" class="rounded-circle"><img src="/assets/img/3.png" width="112" height="112" alt="avatar" onerror="this.style.display='none'"></a>
+
+    <a class="site-title d-block" href="/">Zxsheather</a>
+    <p class="site-subtitle fst-italic mb-0">A CS Undergraduate</p>
+  </header>
+  <!-- .profile-wrapper -->
+
+  <nav class="flex-column flex-grow-1 w-100 ps-0">
+    <ul class="nav">
+      <!-- home -->
+      <li class="nav-item">
+        <a href="/" class="nav-link">
+          <i class="fa-fw fas fa-home"></i>
+          <span>首页</span>
+        </a>
+      </li>
+      <!-- the real tabs -->
+      
+        <li class="nav-item">
+          <a href="/categories/" class="nav-link">
+            <i class="fa-fw fas fa-stream"></i>
+            
+
+            <span>分类</span>
+          </a>
+        </li>
+        <!-- .nav-item -->
+      
+        <li class="nav-item">
+          <a href="/tags/" class="nav-link">
+            <i class="fa-fw fas fa-tags"></i>
+            
+
+            <span>标签</span>
+          </a>
+        </li>
+        <!-- .nav-item -->
+      
+        <li class="nav-item">
+          <a href="/archives/" class="nav-link">
+            <i class="fa-fw fas fa-archive"></i>
+            
+
+            <span>归档</span>
+          </a>
+        </li>
+        <!-- .nav-item -->
+      
+        <li class="nav-item">
+          <a href="/about/" class="nav-link">
+            <i class="fa-fw fas fa-info-circle"></i>
+            
+
+            <span>关于</span>
+          </a>
+        </li>
+        <!-- .nav-item -->
+      
+    </ul>
+  </nav>
+
+  <div class="sidebar-bottom d-flex flex-wrap  align-items-center w-100">
+    
+      <button type="button" class="btn btn-link nav-link" aria-label="Switch Mode" id="mode-toggle">
+        <i class="fas fa-adjust"></i>
+      </button>
+
+      
+    
+
+    
+  </div>
+  <!-- .sidebar-bottom -->
+</aside>
+<!-- #sidebar -->
+
+
+    <div id="main-wrapper" class="d-flex justify-content-center">
+      <div class="container d-flex flex-column px-xxl-5">
+        <!-- The Top Bar -->
+
+<header id="topbar-wrapper" class="flex-shrink-0" aria-label="Top Bar">
+  <div
+    id="topbar"
+    class="d-flex align-items-center justify-content-between px-lg-3 h-100"
+  >
+    <nav id="breadcrumb" aria-label="Breadcrumb">
+      
+
+      
+        
+          
+            <span>
+              <a href="/">首页</a>
+            </span>
+
+          
+        
+          
+        
+          
+            
+              <span>Pintos Kernel 13 Interrupt Init</span>
+            
+
+          
+        
+      
+    </nav>
+    <!-- endof #breadcrumb -->
+
+    <button type="button" id="sidebar-trigger" class="btn btn-link" aria-label="Sidebar">
+      <i class="fas fa-bars fa-fw"></i>
+    </button>
+
+    <div id="topbar-title">
+      文章
+    </div>
+
+    <button type="button" id="search-trigger" class="btn btn-link" aria-label="Search">
+      <i class="fas fa-search fa-fw"></i>
+    </button>
+
+    <search id="search" class="align-items-center ms-3 ms-lg-0">
+      <i class="fas fa-search fa-fw"></i>
+      <input
+        class="form-control"
+        id="search-input"
+        type="search"
+        aria-label="search"
+        autocomplete="off"
+        placeholder="搜索..."
+      >
+    </search>
+    <button type="button" class="btn btn-link text-decoration-none" id="search-cancel">取消</button>
+  </div>
+</header>
+
+
+        <div class="row flex-grow-1">
+          <main aria-label="Main Content" class="col-12 col-lg-11 col-xl-9 px-md-4">
+            
+              <!-- Refactor the HTML structure -->
+
+
+
+<!--
+  In order to allow a wide table to scroll horizontally,
+  we suround the markdown table with `<div class="table-wrapper">` and `</div>`
+-->
+
+
+
+<!--
+  Fixed kramdown code highlight rendering:
+  https://github.com/penibelst/jekyll-compress-html/issues/101
+  https://github.com/penibelst/jekyll-compress-html/issues/71#issuecomment-188144901
+-->
+
+
+
+<!-- Change the icon of checkbox -->
+
+
+
+<!-- Handle images -->
+
+
+
+
+
+<!-- Add header for code snippets -->
+
+
+
+<!-- Create heading anchors -->
+
+
+
+
+
+  
+  
+
+  
+    
+    
+
+    
+      
+        
+        
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+
+    
+  
+
+  
+  
+
+  
+    
+    
+
+    
+      
+        
+        
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+
+    
+  
+
+  
+  
+
+  
+    
+    
+
+    
+      
+        
+        
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+      
+
+      
+      
+
+      
+      
+      
+
+      
+    
+
+    
+  
+
+  
+  
+
+  
+
+
+
+
+<!-- return -->
+
+
+
+
+
+
+
+
+
+
+<article class="px-1" data-toc="true">
+  <header>
+    <h1 data-toc-skip>Pintos Kernel 13 Interrupt Init</h1>
+    
+
+    <div class="post-meta text-muted">
+      <!-- published date -->
+      <span>
+        发表于
+        <!--
+  Date format snippet
+  See: ${JS_ROOT}/utils/locale-dateime.js
+-->
+
+
+
+
+<time
+  
+  data-ts="1769011200"
+  data-df="YYYY/MM/DD"
+  
+    data-bs-toggle="tooltip" data-bs-placement="bottom"
+  
+>
+  2026/01/22
+</time>
+
+      </span>
+
+      <!-- lastmod date -->
+      
+
+      
+
+      <div class="d-flex justify-content-between">
+        <!-- author(s) -->
+        <span>
+          
+
+          作者
+
+          <em>
+            
+              <a href="https://github.com/zxsheather">Zxsheather</a>
+            
+          </em>
+        </span>
+
+        <div>
+          <!-- pageviews -->
+          
+
+          <!-- read time -->
+          <!-- Calculate the post's reading time, and display the word count in tooltip -->
+
+
+
+<!-- words per minute -->
+
+
+
+
+
+
+
+
+
+
+<!-- return element -->
+<span
+  class="readtime"
+  data-bs-toggle="tooltip"
+  data-bs-placement="bottom"
+  title="4662 字"
+>
+  <em>25 分钟</em>阅读</span>
+
+        </div>
+      </div>
+    </div>
+  </header>
+
+  
+    <div id="toc-bar" class="d-flex align-items-center justify-content-between invisible">
+      <span class="label text-truncate">Pintos Kernel 13 Interrupt Init</span>
+      <button type="button" class="toc-trigger btn me-1">
+        <i class="fa-solid fa-list-ul fa-fw"></i>
+      </button>
+    </div>
+
+    <button id="toc-solo-trigger" type="button" class="toc-trigger btn btn-outline-secondary btn-sm">
+      <span class="label ps-2 pe-1">文章内容</span>
+      <i class="fa-solid fa-angle-right fa-fw"></i>
+    </button>
+
+    <dialog id="toc-popup" class="p-0">
+      <div class="header d-flex flex-row align-items-center justify-content-between">
+        <div class="label text-truncate py-2 ms-4">Pintos Kernel 13 Interrupt Init</div>
+        <button id="toc-popup-close" type="button" class="btn mx-1 my-1 opacity-75">
+          <i class="fas fa-close"></i>
+        </button>
+      </div>
+      <div id="toc-popup-content" class="px-4 py-3 pb-4"></div>
+    </dialog>
+  
+
+  <div class="content">
+    <h1 id="pintos-内核启动十三中断系统初始化">Pintos 内核启动（十三）：中断系统初始化</h1>
+
+<h2 id="概述"><span class="me-2">概述</span><a href="#概述" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<p>本文档详细解析 Pintos 内核的中断系统初始化过程 <code class="language-plaintext highlighter-rouge">intr_init()</code>。中断是操作系统响应外部事件和处理异常的核心机制。正确初始化中断系统是操作系统能够响应硬件事件（如定时器、键盘）和处理软件异常（如除零错误、缺页）的前提。</p>
+
+<p>Pintos 的中断系统涉及以下关键组件：</p>
+<ol>
+  <li><strong>IDT（Interrupt Descriptor Table）</strong>：中断描述符表，存储中断处理程序的入口</li>
+  <li><strong>PIC（Programmable Interrupt Controller）</strong>：可编程中断控制器，管理硬件中断</li>
+  <li><strong>中断处理函数</strong>：实际处理中断的 C 代码</li>
+</ol>
+
+<h2 id="原始代码"><span class="me-2">原始代码</span><a href="#原始代码" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<h3 id="interruptc-中的-intr_init-函数"><span class="me-2">interrupt.c 中的 intr_init() 函数</span><a href="#interruptc-中的-intr_init-函数" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+</pre></td><td class="rouge-code"><pre><span class="cm">/** Initializes the interrupt system. */</span>
+<span class="kt">void</span>
+<span class="nf">intr_init</span> <span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">uint64_t</span> <span class="n">idtr_operand</span><span class="p">;</span>
+  <span class="kt">int</span> <span class="n">i</span><span class="p">;</span>
+
+  <span class="cm">/* Initialize interrupt controller. */</span>
+  <span class="n">pic_init</span> <span class="p">();</span>
+
+  <span class="cm">/* Initialize IDT. */</span>
+  <span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">INTR_CNT</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span>
+    <span class="n">idt</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">make_intr_gate</span> <span class="p">(</span><span class="n">intr_stubs</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="mi">0</span><span class="p">);</span>
+
+  <span class="cm">/* Load IDT register.
+     See [IA32-v2a] "LIDT" and [IA32-v3a] 5.10 "Interrupt
+     Descriptor Table (IDT)". */</span>
+  <span class="n">idtr_operand</span> <span class="o">=</span> <span class="n">make_idtr_operand</span> <span class="p">(</span><span class="k">sizeof</span> <span class="n">idt</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">idt</span><span class="p">);</span>
+  <span class="n">asm</span> <span class="k">volatile</span> <span class="p">(</span><span class="s">"lidt %0"</span> <span class="o">:</span> <span class="o">:</span> <span class="s">"m"</span> <span class="p">(</span><span class="n">idtr_operand</span><span class="p">));</span>
+
+  <span class="cm">/* Initialize intr_names. */</span>
+  <span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">INTR_CNT</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span>
+    <span class="n">intr_names</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="s">"unknown"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#DE Divide Error"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#DB Debug Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="s">"NMI Interrupt"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#BP Breakpoint Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#OF Overflow Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#BR BOUND Range Exceeded Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">6</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#UD Invalid Opcode Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">7</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#NM Device Not Available Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">8</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#DF Double Fault Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">9</span><span class="p">]</span> <span class="o">=</span> <span class="s">"Coprocessor Segment Overrun"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">10</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#TS Invalid TSS Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">11</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#NP Segment Not Present"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">12</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#SS Stack Fault Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">13</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#GP General Protection Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">14</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#PF Page-Fault Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">16</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#MF x87 FPU Floating-Point Error"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">17</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#AC Alignment Check Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">18</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#MC Machine-Check Exception"</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="mi">19</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#XF SIMD Floating-Point Exception"</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<h3 id="pic_init-函数"><span class="me-2">pic_init() 函数</span><a href="#pic_init-函数" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+</pre></td><td class="rouge-code"><pre><span class="cm">/** Initializes the PICs.  Refer to [8259A] for details.
+
+   By default, interrupts 0...15 delivered by the PICs will go to
+   interrupt vectors 0...15.  Those vectors are also used for CPU
+   traps and exceptions, so we reprogram the PICs so that
+   interrupts 0...15 are delivered to interrupt vectors 32...47
+   (0x20...0x2f) instead. */</span>
+<span class="k">static</span> <span class="kt">void</span>
+<span class="nf">pic_init</span> <span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="cm">/* Mask all interrupts on both PICs. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0xff</span><span class="p">);</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0xff</span><span class="p">);</span>
+
+  <span class="cm">/* Initialize master. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_CTRL</span><span class="p">,</span> <span class="mh">0x11</span><span class="p">);</span> <span class="cm">/* ICW1: single mode, edge triggered, expect ICW4. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0x20</span><span class="p">);</span> <span class="cm">/* ICW2: line IR0...7 -&gt; irq 0x20...0x27. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0x04</span><span class="p">);</span> <span class="cm">/* ICW3: slave PIC on line IR2. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0x01</span><span class="p">);</span> <span class="cm">/* ICW4: 8086 mode, normal EOI, non-buffered. */</span>
+
+  <span class="cm">/* Initialize slave. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_CTRL</span><span class="p">,</span> <span class="mh">0x11</span><span class="p">);</span> <span class="cm">/* ICW1: single mode, edge triggered, expect ICW4. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0x28</span><span class="p">);</span> <span class="cm">/* ICW2: line IR0...7 -&gt; irq 0x28...0x2f. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0x02</span><span class="p">);</span> <span class="cm">/* ICW3: slave ID is 2. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0x01</span><span class="p">);</span> <span class="cm">/* ICW4: 8086 mode, normal EOI, non-buffered. */</span>
+
+  <span class="cm">/* Unmask all interrupts. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">);</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<h2 id="前置知识"><span class="me-2">前置知识</span><a href="#前置知识" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<h3 id="1-x86-中断分类"><span class="me-2">1. x86 中断分类</span><a href="#1-x86-中断分类" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>x86 系统中的中断分为三类：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+</pre></td><td class="rouge-code"><pre>中断类型
+│
+├─→ 异常（Exceptions）: CPU 内部产生
+│   │
+│   ├─→ 故障（Faults）: 可恢复，返回到引起故障的指令
+│   │   例：#PF Page Fault, #GP General Protection
+│   │
+│   ├─→ 陷阱（Traps）: 可恢复，返回到下一条指令
+│   │   例：#BP Breakpoint, #OF Overflow
+│   │
+│   └─→ 终止（Aborts）: 不可恢复
+│       例：#DF Double Fault, #MC Machine Check
+│
+├─→ 软件中断（Software Interrupts）: INT 指令产生
+│   例：INT 0x80 (系统调用)
+│
+└─→ 硬件中断（Hardware Interrupts）: 外部设备产生
+    │
+    ├─→ 可屏蔽中断（Maskable）: 通过 PIC 传递
+    │   例：定时器、键盘、硬盘
+    │
+    └─→ 不可屏蔽中断（NMI）: 直接到达 CPU
+        例：内存校验错误
+</pre></td></tr></tbody></table></code></div></div>
+
+<h3 id="2-中断向量表"><span class="me-2">2. 中断向量表</span><a href="#2-中断向量表" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>x86 支持 256 个中断向量（0-255）：</p>
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>向量范围</th>
+      <th>类型</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0-19</td>
+      <td>CPU 异常</td>
+      <td>由 Intel 定义</td>
+    </tr>
+    <tr>
+      <td>20-31</td>
+      <td>保留</td>
+      <td>Intel 保留</td>
+    </tr>
+    <tr>
+      <td>32-47</td>
+      <td>硬件中断</td>
+      <td>重映射后的 IRQ 0-15</td>
+    </tr>
+    <tr>
+      <td>48-255</td>
+      <td>可用</td>
+      <td>软件中断、系统调用等</td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h3 id="3-8259a-pic-架构"><span class="me-2">3. 8259A PIC 架构</span><a href="#3-8259a-pic-架构" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>PC 使用两片级联的 8259A PIC：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+</pre></td><td class="rouge-code"><pre>                           ┌─────────────────┐
+                           │      CPU        │
+                           │                 │
+                           │   INTR ◄────────┼──────┐
+                           └─────────────────┘      │
+                                                    │
+┌──────────────────────┐                    ┌──────┴──────────────┐
+│     外部设备          │                    │    Master PIC       │
+│                      │                    │    (8259A #0)       │
+│  IRQ0: 定时器 ───────┼────────────────────┼→ IR0               │
+│  IRQ1: 键盘 ─────────┼────────────────────┼→ IR1               │
+│  IRQ2: 级联 ─────────┼────────────────────┼→ IR2 ◄─────────────┼──┐
+│  IRQ3: COM2 ─────────┼────────────────────┼→ IR3               │  │
+│  IRQ4: COM1 ─────────┼────────────────────┼→ IR4               │  │
+│  IRQ5: LPT2 ─────────┼────────────────────┼→ IR5               │  │
+│  IRQ6: 软盘 ─────────┼────────────────────┼→ IR6               │  │
+│  IRQ7: LPT1 ─────────┼────────────────────┼→ IR7               │  │
+│                      │                    └────────────────────┘  │
+│                      │                                            │
+│                      │                    ┌────────────────────┐  │
+│                      │                    │    Slave PIC        │  │
+│                      │                    │    (8259A #1)       │  │
+│  IRQ8: RTC ──────────┼────────────────────┼→ IR0               │  │
+│  IRQ9: ACPI ─────────┼────────────────────┼→ IR1               │  │
+│  IRQ10: 可用 ────────┼────────────────────┼→ IR2               │  │
+│  IRQ11: 可用 ────────┼────────────────────┼→ IR3               │  │
+│  IRQ12: PS/2鼠标 ────┼────────────────────┼→ IR4               │  │
+│  IRQ13: FPU ─────────┼────────────────────┼→ IR5               │  │
+│  IRQ14: IDE Primary ─┼────────────────────┼→ IR6               │  │
+│  IRQ15: IDE Secondary┼────────────────────┼→ IR7               │  │
+│                      │                    │         INT ────────┼──┘
+└──────────────────────┘                    └────────────────────┘
+</pre></td></tr></tbody></table></code></div></div>
+
+<h3 id="4-idt-描述符格式"><span class="me-2">4. IDT 描述符格式</span><a href="#4-idt-描述符格式" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>每个 IDT 条目（门描述符）是 8 字节：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+</pre></td><td class="rouge-code"><pre>63                48 47 46 45 44 43 40 39        32
++------------------+--+-----+--+------+------------+
+|  Offset 31:16    |P |DPL |S | Type |  Reserved  |
++------------------+--+-----+--+------+------------+
+
+31                16 15                           0
++------------------+-----------------------------+
+| Segment Selector |       Offset 15:0           |
++------------------+-----------------------------+
+
+各字段说明：
+- Offset: 中断处理程序的地址（分成两部分）
+- P: 存在位（1=有效）
+- DPL: 描述符特权级（0-3）
+- S: 系统段（必须为0）
+- Type: 门类型（14=中断门，15=陷阱门）
+- Segment Selector: 代码段选择子
+</pre></td></tr></tbody></table></code></div></div>
+
+<h3 id="5-中断门-vs-陷阱门"><span class="me-2">5. 中断门 vs 陷阱门</span><a href="#5-中断门-vs-陷阱门" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>特性</th>
+      <th>中断门（Interrupt Gate）</th>
+      <th>陷阱门（Trap Gate）</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Type</td>
+      <td>14 (0xE)</td>
+      <td>15 (0xF)</td>
+    </tr>
+    <tr>
+      <td>进入时</td>
+      <td>自动关中断 (IF=0)</td>
+      <td>保持中断状态</td>
+    </tr>
+    <tr>
+      <td>用途</td>
+      <td>硬件中断</td>
+      <td>软件中断、异常</td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h3 id="6-中断帧interrupt-frame"><span class="me-2">6. 中断帧（Interrupt Frame）</span><a href="#6-中断帧interrupt-frame" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>中断发生时 CPU 自动压栈的内容：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+</pre></td><td class="rouge-code"><pre>高地址
+┌───────────────────┐
+│       SS          │  (特权级改变时)
+├───────────────────┤
+│       ESP         │  (特权级改变时)
+├───────────────────┤
+│      EFLAGS       │
+├───────────────────┤
+│       CS          │
+├───────────────────┤
+│       EIP         │
+├───────────────────┤
+│   Error Code      │  (某些异常)
+├───────────────────┤
+│   (软件压入的)     │
+│   寄存器等        │
+└───────────────────┘
+低地址
+</pre></td></tr></tbody></table></code></div></div>
+
+<h2 id="逐行代码解析"><span class="me-2">逐行代码解析</span><a href="#逐行代码解析" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<h3 id="intr_init-函数解析"><span class="me-2">intr_init() 函数解析</span><a href="#intr_init-函数解析" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<h4 id="第1-2行变量声明"><span class="me-2">第1-2行：变量声明</span><a href="#第1-2行变量声明" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+</pre></td><td class="rouge-code"><pre><span class="kt">uint64_t</span> <span class="n">idtr_operand</span><span class="p">;</span>
+<span class="kt">int</span> <span class="n">i</span><span class="p">;</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>详细解析</strong>：</p>
+
+<ol>
+  <li><strong>idtr_operand</strong>：
+    <ul>
+      <li>64 位值，存储 IDTR 寄存器的操作数</li>
+      <li>格式：低 16 位是限制（limit），高 32 位是基址（base）</li>
+    </ul>
+  </li>
+  <li><strong>i</strong>：循环变量</li>
+</ol>
+
+<h4 id="第3行初始化-pic"><span class="me-2">第3行：初始化 PIC</span><a href="#第3行初始化-pic" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+</pre></td><td class="rouge-code"><pre><span class="n">pic_init</span> <span class="p">();</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>详细解析</strong>：</p>
+
+<p>这是关键的一步，重新配置 8259A PIC。详见下面的 <code class="language-plaintext highlighter-rouge">pic_init()</code> 解析。</p>
+
+<h4 id="第4-5行初始化-idt"><span class="me-2">第4-5行：初始化 IDT</span><a href="#第4-5行初始化-idt" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+</pre></td><td class="rouge-code"><pre><span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">INTR_CNT</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span>
+  <span class="n">idt</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">make_intr_gate</span> <span class="p">(</span><span class="n">intr_stubs</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="mi">0</span><span class="p">);</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>详细解析</strong>：</p>
+
+<ol>
+  <li>
+    <p><strong>INTR_CNT = 256</strong>：x86 支持的中断向量数</p>
+  </li>
+  <li><strong>intr_stubs[]</strong>：
+    <ul>
+      <li>中断存根函数数组</li>
+      <li>在 <code class="language-plaintext highlighter-rouge">intr-stubs.S</code> 中定义</li>
+      <li>每个存根函数负责保存上下文并调用统一的处理函数</li>
+    </ul>
+  </li>
+  <li><strong>make_intr_gate()</strong>：
+    <ul>
+      <li>创建中断门描述符</li>
+      <li>DPL=0 表示只有内核可以触发</li>
+    </ul>
+  </li>
+  <li><strong>初始状态</strong>：
+    <ul>
+      <li>所有中断都使用中断门（进入时关中断）</li>
+      <li>所有中断都没有实际处理程序（后续注册）</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>intr_stubs 示意</strong>：</p>
+
+<pre><code class="language-assembly"># intr-stubs.S 中的代码结构（简化）
+intr00_stub:
+    push $0         # 假错误码
+    push $0x00      # 向量号
+    jmp intr_entry
+
+intr01_stub:
+    push $0         # 假错误码
+    push $0x01      # 向量号
+    jmp intr_entry
+    
+# ... 256 个存根函数 ...
+</code></pre>
+
+<h4 id="第6-8行加载-idt"><span class="me-2">第6-8行：加载 IDT</span><a href="#第6-8行加载-idt" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+</pre></td><td class="rouge-code"><pre><span class="n">idtr_operand</span> <span class="o">=</span> <span class="n">make_idtr_operand</span> <span class="p">(</span><span class="k">sizeof</span> <span class="n">idt</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">idt</span><span class="p">);</span>
+<span class="n">asm</span> <span class="nf">volatile</span> <span class="p">(</span><span class="s">"lidt %0"</span> <span class="o">:</span> <span class="o">:</span> <span class="s">"m"</span> <span class="p">(</span><span class="n">idtr_operand</span><span class="p">));</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>详细解析</strong>：</p>
+
+<ol>
+  <li><strong>make_idtr_operand()</strong>：</li>
+</ol>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+</pre></td><td class="rouge-code"><pre><span class="k">static</span> <span class="kr">inline</span> <span class="kt">uint64_t</span>
+<span class="nf">make_idtr_operand</span> <span class="p">(</span><span class="kt">uint16_t</span> <span class="n">limit</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">base</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="k">return</span> <span class="n">limit</span> <span class="o">|</span> <span class="p">((</span><span class="kt">uint64_t</span><span class="p">)</span> <span class="p">(</span><span class="kt">uint32_t</span><span class="p">)</span> <span class="n">base</span> <span class="o">&lt;&lt;</span> <span class="mi">16</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p>构造 IDTR 操作数格式：</p>
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+</pre></td><td class="rouge-code"><pre>63                             16 15              0
++--------------------------------+----------------+
+|         Base Address           |     Limit      |
++--------------------------------+----------------+
+</pre></td></tr></tbody></table></code></div></div>
+
+<ol>
+  <li><strong>sizeof idt - 1</strong>：
+    <ul>
+      <li>IDT 大小为 256 × 8 = 2048 字节</li>
+      <li>limit = 2048 - 1 = 2047</li>
+    </ul>
+  </li>
+  <li><strong>LIDT 指令</strong>：
+    <ul>
+      <li>将 IDT 的位置和大小加载到 IDTR 寄存器</li>
+      <li>之后 CPU 会使用这个 IDT 处理中断</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>IDTR 寄存器结构</strong>：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+</pre></td><td class="rouge-code"><pre>47                             16 15              0
++--------------------------------+----------------+
+|         IDT Base Address       |   IDT Limit    |
++--------------------------------+----------------+
+</pre></td></tr></tbody></table></code></div></div>
+
+<h4 id="第9-25行初始化中断名称"><span class="me-2">第9-25行：初始化中断名称</span><a href="#第9-25行初始化中断名称" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+</pre></td><td class="rouge-code"><pre><span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">INTR_CNT</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="s">"unknown"</span><span class="p">;</span>
+<span class="n">intr_names</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#DE Divide Error"</span><span class="p">;</span>
+<span class="n">intr_names</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="s">"#DB Debug Exception"</span><span class="p">;</span>
+<span class="c1">// ... 更多中断名称 ...</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>详细解析</strong>：</p>
+
+<p>这些名称用于调试，当发生意外中断时打印友好的信息。</p>
+
+<p><strong>标准 CPU 异常列表</strong>：</p>
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>向量</th>
+      <th>助记符</th>
+      <th>名称</th>
+      <th>类型</th>
+      <th>错误码</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0</td>
+      <td>#DE</td>
+      <td>Divide Error</td>
+      <td>Fault</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>#DB</td>
+      <td>Debug</td>
+      <td>Fault/Trap</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>NMI</td>
+      <td>Non-Maskable Interrupt</td>
+      <td>Interrupt</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>#BP</td>
+      <td>Breakpoint</td>
+      <td>Trap</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>#OF</td>
+      <td>Overflow</td>
+      <td>Trap</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>#BR</td>
+      <td>BOUND Range Exceeded</td>
+      <td>Fault</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>#UD</td>
+      <td>Invalid Opcode</td>
+      <td>Fault</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td>#NM</td>
+      <td>Device Not Available</td>
+      <td>Fault</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td>#DF</td>
+      <td>Double Fault</td>
+      <td>Abort</td>
+      <td>有(0)</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td>-</td>
+      <td>Coprocessor Segment Overrun</td>
+      <td>Fault</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td>#TS</td>
+      <td>Invalid TSS</td>
+      <td>Fault</td>
+      <td>有</td>
+    </tr>
+    <tr>
+      <td>11</td>
+      <td>#NP</td>
+      <td>Segment Not Present</td>
+      <td>Fault</td>
+      <td>有</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td>#SS</td>
+      <td>Stack-Segment Fault</td>
+      <td>Fault</td>
+      <td>有</td>
+    </tr>
+    <tr>
+      <td>13</td>
+      <td>#GP</td>
+      <td>General Protection</td>
+      <td>Fault</td>
+      <td>有</td>
+    </tr>
+    <tr>
+      <td>14</td>
+      <td>#PF</td>
+      <td>Page Fault</td>
+      <td>Fault</td>
+      <td>有</td>
+    </tr>
+    <tr>
+      <td>15</td>
+      <td>-</td>
+      <td>Reserved</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>16</td>
+      <td>#MF</td>
+      <td>x87 FPU Error</td>
+      <td>Fault</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>17</td>
+      <td>#AC</td>
+      <td>Alignment Check</td>
+      <td>Fault</td>
+      <td>有(0)</td>
+    </tr>
+    <tr>
+      <td>18</td>
+      <td>#MC</td>
+      <td>Machine Check</td>
+      <td>Abort</td>
+      <td>无</td>
+    </tr>
+    <tr>
+      <td>19</td>
+      <td>#XF</td>
+      <td>SIMD Floating-Point</td>
+      <td>Fault</td>
+      <td>无</td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h3 id="pic_init-函数解析"><span class="me-2">pic_init() 函数解析</span><a href="#pic_init-函数解析" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<h4 id="第1-2行屏蔽所有中断"><span class="me-2">第1-2行：屏蔽所有中断</span><a href="#第1-2行屏蔽所有中断" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+</pre></td><td class="rouge-code"><pre><span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0xff</span><span class="p">);</span>
+<span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0xff</span><span class="p">);</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>详细解析</strong>：</p>
+
+<ul>
+  <li>写入数据端口设置中断屏蔽寄存器（IMR）</li>
+  <li>0xFF = 11111111b = 屏蔽所有 8 个中断线</li>
+  <li>防止初始化过程中产生中断</li>
+</ul>
+
+<h4 id="第3-6行初始化主-pic"><span class="me-2">第3-6行：初始化主 PIC</span><a href="#第3-6行初始化主-pic" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+</pre></td><td class="rouge-code"><pre><span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_CTRL</span><span class="p">,</span> <span class="mh">0x11</span><span class="p">);</span> <span class="cm">/* ICW1 */</span>
+<span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0x20</span><span class="p">);</span> <span class="cm">/* ICW2 */</span>
+<span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0x04</span><span class="p">);</span> <span class="cm">/* ICW3 */</span>
+<span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0x01</span><span class="p">);</span> <span class="cm">/* ICW4 */</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>ICW（Initialization Command Words）详解</strong>：</p>
+
+<p><strong>ICW1 (0x11)</strong>：</p>
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+</pre></td><td class="rouge-code"><pre>位 7-5: 未使用
+位 4:   1 = ICW1 标识
+位 3:   0 = 边沿触发
+位 2:   0 = 8 字节中断向量间隔
+位 1:   0 = 级联模式
+位 0:   1 = 需要 ICW4
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>ICW2 (0x20)</strong>：</p>
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+</pre></td><td class="rouge-code"><pre>位 7-3: 向量基址的高 5 位 = 0x20 = 32
+位 2-0: 由 PIC 填充
+结果：IR0-7 映射到向量 0x20-0x27
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>ICW3 (0x04)</strong>：</p>
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+</pre></td><td class="rouge-code"><pre>位 2:   1 = IR2 连接从 PIC
+其他位: 0
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>ICW4 (0x01)</strong>：</p>
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+</pre></td><td class="rouge-code"><pre>位 4:   0 = 非特殊全嵌套模式
+位 3-2: 00 = 非缓冲模式
+位 1:   0 = 正常 EOI
+位 0:   1 = 8086 模式
+</pre></td></tr></tbody></table></code></div></div>
+
+<h4 id="第7-10行初始化从-pic"><span class="me-2">第7-10行：初始化从 PIC</span><a href="#第7-10行初始化从-pic" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+</pre></td><td class="rouge-code"><pre><span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_CTRL</span><span class="p">,</span> <span class="mh">0x11</span><span class="p">);</span> <span class="cm">/* ICW1 */</span>
+<span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0x28</span><span class="p">);</span> <span class="cm">/* ICW2: 映射到 0x28-0x2f */</span>
+<span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0x02</span><span class="p">);</span> <span class="cm">/* ICW3: 从 ID = 2 */</span>
+<span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0x01</span><span class="p">);</span> <span class="cm">/* ICW4 */</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>ICW3 (0x02) 对于从 PIC</strong>：</p>
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+</pre></td><td class="rouge-code"><pre>位 2-0: 010 = 从 ID 为 2（连接到主 PIC 的 IR2）
+</pre></td></tr></tbody></table></code></div></div>
+
+<h4 id="第11-12行取消屏蔽所有中断"><span class="me-2">第11-12行：取消屏蔽所有中断</span><a href="#第11-12行取消屏蔽所有中断" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h4>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+</pre></td><td class="rouge-code"><pre><span class="n">outb</span> <span class="p">(</span><span class="n">PIC0_DATA</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">);</span>
+<span class="n">outb</span> <span class="p">(</span><span class="n">PIC1_DATA</span><span class="p">,</span> <span class="mh">0x00</span><span class="p">);</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>详细解析</strong>：</p>
+
+<ul>
+  <li>0x00 = 00000000b = 允许所有中断</li>
+  <li>虽然 PIC 不再屏蔽中断，但 CPU 的 IF 标志仍为 0</li>
+  <li>中断要等到 <code class="language-plaintext highlighter-rouge">intr_enable()</code> 才会真正被处理</li>
+</ul>
+
+<h3 id="make_gate-函数解析"><span class="me-2">make_gate() 函数解析</span><a href="#make_gate-函数解析" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+</pre></td><td class="rouge-code"><pre><span class="k">static</span> <span class="kt">uint64_t</span>
+<span class="nf">make_gate</span> <span class="p">(</span><span class="kt">void</span> <span class="p">(</span><span class="o">*</span><span class="n">function</span><span class="p">)</span> <span class="p">(</span><span class="kt">void</span><span class="p">),</span> <span class="kt">int</span> <span class="n">dpl</span><span class="p">,</span> <span class="kt">int</span> <span class="n">type</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="kt">uint32_t</span> <span class="n">e0</span><span class="p">,</span> <span class="n">e1</span><span class="p">;</span>
+
+  <span class="n">ASSERT</span> <span class="p">(</span><span class="n">function</span> <span class="o">!=</span> <span class="nb">NULL</span><span class="p">);</span>
+  <span class="n">ASSERT</span> <span class="p">(</span><span class="n">dpl</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">dpl</span> <span class="o">&lt;=</span> <span class="mi">3</span><span class="p">);</span>
+  <span class="n">ASSERT</span> <span class="p">(</span><span class="n">type</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">type</span> <span class="o">&lt;=</span> <span class="mi">15</span><span class="p">);</span>
+
+  <span class="n">e0</span> <span class="o">=</span> <span class="p">(((</span><span class="kt">uint32_t</span><span class="p">)</span> <span class="n">function</span> <span class="o">&amp;</span> <span class="mh">0xffff</span><span class="p">)</span>     <span class="cm">/* Offset 15:0. */</span>
+        <span class="o">|</span> <span class="p">(</span><span class="n">SEL_KCSEG</span> <span class="o">&lt;&lt;</span> <span class="mi">16</span><span class="p">));</span>              <span class="cm">/* Target code segment. */</span>
+
+  <span class="n">e1</span> <span class="o">=</span> <span class="p">(((</span><span class="kt">uint32_t</span><span class="p">)</span> <span class="n">function</span> <span class="o">&amp;</span> <span class="mh">0xffff0000</span><span class="p">)</span> <span class="cm">/* Offset 31:16. */</span>
+        <span class="o">|</span> <span class="p">(</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">15</span><span class="p">)</span>                        <span class="cm">/* Present. */</span>
+        <span class="o">|</span> <span class="p">((</span><span class="kt">uint32_t</span><span class="p">)</span> <span class="n">dpl</span> <span class="o">&lt;&lt;</span> <span class="mi">13</span><span class="p">)</span>           <span class="cm">/* Descriptor privilege level. */</span>
+        <span class="o">|</span> <span class="p">(</span><span class="mi">0</span> <span class="o">&lt;&lt;</span> <span class="mi">12</span><span class="p">)</span>                        <span class="cm">/* System. */</span>
+        <span class="o">|</span> <span class="p">((</span><span class="kt">uint32_t</span><span class="p">)</span> <span class="n">type</span> <span class="o">&lt;&lt;</span> <span class="mi">8</span><span class="p">));</span>         <span class="cm">/* Gate type. */</span>
+
+  <span class="k">return</span> <span class="n">e0</span> <span class="o">|</span> <span class="p">((</span><span class="kt">uint64_t</span><span class="p">)</span> <span class="n">e1</span> <span class="o">&lt;&lt;</span> <span class="mi">32</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>描述符构造图示</strong>：</p>
+
+<p>假设 <code class="language-plaintext highlighter-rouge">function = 0xC0012345</code>，<code class="language-plaintext highlighter-rouge">dpl = 0</code>，<code class="language-plaintext highlighter-rouge">type = 14</code>（中断门）：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+</pre></td><td class="rouge-code"><pre>e0 构造：
+┌────────────────┬────────────────┐
+│  SEL_KCSEG     │  Offset 15:0   │
+│    (0x08)      │   (0x2345)     │
+└────────────────┴────────────────┘
+e0 = 0x00082345
+
+e1 构造：
+┌────────────────┬─┬──┬─┬────┬────┐
+│ Offset 31:16   │P│DPL│S│Type│ 0  │
+│   (0xC001)     │1│ 0 │0│ E  │    │
+└────────────────┴─┴──┴─┴────┴────┘
+e1 = 0xC0018E00
+
+最终描述符：
+63                                                 0
++--------------------------------------------------+
+|  0xC0018E00            |  0x00082345             |
++--------------------------------------------------+
+</pre></td></tr></tbody></table></code></div></div>
+
+<h2 id="中断处理流程"><span class="me-2">中断处理流程</span><a href="#中断处理流程" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<h3 id="完整的中断处理流程"><span class="me-2">完整的中断处理流程</span><a href="#完整的中断处理流程" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+</pre></td><td class="rouge-code"><pre>1. 中断发生
+   │
+   ├─→ 硬件中断：设备 → PIC → CPU INTR
+   │
+   └─→ 异常/软中断：CPU 内部产生
+   
+2. CPU 响应
+   │
+   ├─→ 保存当前状态到栈
+   │   - EFLAGS, CS, EIP
+   │   - 错误码（如果有）
+   │   - SS, ESP（特权级改变时）
+   │
+   └─→ 从 IDT 获取处理程序地址
+       向量号 × 8 + IDT 基址
+
+3. 跳转到中断存根
+   │
+   ├─→ intrNN_stub (intr-stubs.S)
+   │   - 压入错误码（如果 CPU 没压入）
+   │   - 压入向量号
+   │   - 跳转到 intr_entry
+   │
+   └─→ intr_entry
+       - 保存所有通用寄存器
+       - 保存段寄存器
+       - 设置内核数据段
+       - 调用 intr_handler()
+
+4. C 语言处理
+   │
+   └─→ intr_handler (struct intr_frame *frame)
+       │
+       ├─→ 外部中断？
+       │   - 设置 in_external_intr = true
+       │
+       ├─→ 查找并调用注册的处理程序
+       │   handler = intr_handlers[frame-&gt;vec_no]
+       │
+       └─→ 外部中断完成处理
+           - 发送 EOI 到 PIC
+           - 检查是否需要调度
+
+5. 返回
+   │
+   └─→ intr_exit (intr-stubs.S)
+       - 恢复段寄存器
+       - 恢复通用寄存器
+       - iret 指令返回
+</pre></td></tr></tbody></table></code></div></div>
+
+<h3 id="intr_handler-函数详解"><span class="me-2">intr_handler() 函数详解</span><a href="#intr_handler-函数详解" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+</pre></td><td class="rouge-code"><pre><span class="kt">void</span>
+<span class="nf">intr_handler</span> <span class="p">(</span><span class="k">struct</span> <span class="n">intr_frame</span> <span class="o">*</span><span class="n">frame</span><span class="p">)</span> 
+<span class="p">{</span>
+  <span class="n">bool</span> <span class="n">external</span><span class="p">;</span>
+  <span class="n">intr_handler_func</span> <span class="o">*</span><span class="n">handler</span><span class="p">;</span>
+
+  <span class="cm">/* External interrupts are special. */</span>
+  <span class="n">external</span> <span class="o">=</span> <span class="n">frame</span><span class="o">-&gt;</span><span class="n">vec_no</span> <span class="o">&gt;=</span> <span class="mh">0x20</span> <span class="o">&amp;&amp;</span> <span class="n">frame</span><span class="o">-&gt;</span><span class="n">vec_no</span> <span class="o">&lt;</span> <span class="mh">0x30</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">external</span><span class="p">)</span> 
+    <span class="p">{</span>
+      <span class="n">ASSERT</span> <span class="p">(</span><span class="n">intr_get_level</span> <span class="p">()</span> <span class="o">==</span> <span class="n">INTR_OFF</span><span class="p">);</span>
+      <span class="n">ASSERT</span> <span class="p">(</span><span class="o">!</span><span class="n">intr_context</span> <span class="p">());</span>
+
+      <span class="n">in_external_intr</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+      <span class="n">yield_on_return</span> <span class="o">=</span> <span class="nb">false</span><span class="p">;</span>
+    <span class="p">}</span>
+
+  <span class="cm">/* Invoke the interrupt's handler. */</span>
+  <span class="n">handler</span> <span class="o">=</span> <span class="n">intr_handlers</span><span class="p">[</span><span class="n">frame</span><span class="o">-&gt;</span><span class="n">vec_no</span><span class="p">];</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">handler</span> <span class="o">!=</span> <span class="nb">NULL</span><span class="p">)</span>
+    <span class="n">handler</span> <span class="p">(</span><span class="n">frame</span><span class="p">);</span>
+  <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">frame</span><span class="o">-&gt;</span><span class="n">vec_no</span> <span class="o">==</span> <span class="mh">0x27</span> <span class="o">||</span> <span class="n">frame</span><span class="o">-&gt;</span><span class="n">vec_no</span> <span class="o">==</span> <span class="mh">0x2f</span><span class="p">)</span>
+    <span class="p">{</span>
+      <span class="cm">/* Spurious interrupt, ignore it. */</span>
+    <span class="p">}</span>
+  <span class="k">else</span>
+    <span class="n">unexpected_interrupt</span> <span class="p">(</span><span class="n">frame</span><span class="p">);</span>
+
+  <span class="cm">/* Complete the processing of an external interrupt. */</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">external</span><span class="p">)</span> 
+    <span class="p">{</span>
+      <span class="n">ASSERT</span> <span class="p">(</span><span class="n">intr_get_level</span> <span class="p">()</span> <span class="o">==</span> <span class="n">INTR_OFF</span><span class="p">);</span>
+      <span class="n">ASSERT</span> <span class="p">(</span><span class="n">intr_context</span> <span class="p">());</span>
+
+      <span class="n">in_external_intr</span> <span class="o">=</span> <span class="nb">false</span><span class="p">;</span>
+      <span class="n">pic_end_of_interrupt</span> <span class="p">(</span><span class="n">frame</span><span class="o">-&gt;</span><span class="n">vec_no</span><span class="p">);</span> 
+
+      <span class="k">if</span> <span class="p">(</span><span class="n">yield_on_return</span><span class="p">)</span> 
+        <span class="n">thread_yield</span> <span class="p">();</span> 
+    <span class="p">}</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>关键点</strong>：</p>
+
+<ol>
+  <li>
+    <p><strong>外部中断识别</strong>：向量号 0x20-0x2F 是 PIC 重映射后的硬件中断</p>
+  </li>
+  <li><strong>伪中断（Spurious Interrupt）</strong>：
+    <ul>
+      <li>IRQ7 (0x27) 和 IRQ15 (0x2f) 可能产生伪中断</li>
+      <li>由于 PIC 的硬件特性导致</li>
+      <li>应该忽略而不是报错</li>
+    </ul>
+  </li>
+  <li><strong>EOI（End of Interrupt）</strong>：
+    <ul>
+      <li>必须发送 EOI 告知 PIC 中断处理完成</li>
+      <li>否则 PIC 不会传递后续中断</li>
+    </ul>
+  </li>
+  <li><strong>yield_on_return</strong>：
+    <ul>
+      <li>允许中断处理程序请求调度</li>
+      <li>常用于定时器中断（时间片用完）</li>
+    </ul>
+  </li>
+</ol>
+
+<h2 id="中断帧结构"><span class="me-2">中断帧结构</span><a href="#中断帧结构" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<h3 id="struct-intr_frame-详解"><span class="me-2">struct intr_frame 详解</span><a href="#struct-intr_frame-详解" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+</pre></td><td class="rouge-code"><pre><span class="k">struct</span> <span class="n">intr_frame</span>
+<span class="p">{</span>
+  <span class="cm">/* 由 intr_entry 压入的寄存器 */</span>
+  <span class="kt">uint32_t</span> <span class="n">edi</span><span class="p">;</span>               <span class="cm">/* Saved EDI. */</span>
+  <span class="kt">uint32_t</span> <span class="n">esi</span><span class="p">;</span>               <span class="cm">/* Saved ESI. */</span>
+  <span class="kt">uint32_t</span> <span class="n">ebp</span><span class="p">;</span>               <span class="cm">/* Saved EBP. */</span>
+  <span class="kt">uint32_t</span> <span class="n">esp_dummy</span><span class="p">;</span>         <span class="cm">/* Not used (PUSHA 的 ESP). */</span>
+  <span class="kt">uint32_t</span> <span class="n">ebx</span><span class="p">;</span>               <span class="cm">/* Saved EBX. */</span>
+  <span class="kt">uint32_t</span> <span class="n">edx</span><span class="p">;</span>               <span class="cm">/* Saved EDX. */</span>
+  <span class="kt">uint32_t</span> <span class="n">ecx</span><span class="p">;</span>               <span class="cm">/* Saved ECX. */</span>
+  <span class="kt">uint32_t</span> <span class="n">eax</span><span class="p">;</span>               <span class="cm">/* Saved EAX. */</span>
+  <span class="kt">uint16_t</span> <span class="n">gs</span><span class="p">,</span> <span class="o">:</span><span class="mi">16</span><span class="p">;</span>           <span class="cm">/* Saved GS. */</span>
+  <span class="kt">uint16_t</span> <span class="n">fs</span><span class="p">,</span> <span class="o">:</span><span class="mi">16</span><span class="p">;</span>           <span class="cm">/* Saved FS. */</span>
+  <span class="kt">uint16_t</span> <span class="n">es</span><span class="p">,</span> <span class="o">:</span><span class="mi">16</span><span class="p">;</span>           <span class="cm">/* Saved ES. */</span>
+  <span class="kt">uint16_t</span> <span class="n">ds</span><span class="p">,</span> <span class="o">:</span><span class="mi">16</span><span class="p">;</span>           <span class="cm">/* Saved DS. */</span>
+
+  <span class="cm">/* 由 intrNN_stub 压入 */</span>
+  <span class="kt">uint32_t</span> <span class="n">vec_no</span><span class="p">;</span>            <span class="cm">/* Interrupt vector number. */</span>
+  <span class="kt">uint32_t</span> <span class="n">error_code</span><span class="p">;</span>        <span class="cm">/* Error code. */</span>
+  <span class="kt">void</span> <span class="o">*</span><span class="n">frame_pointer</span><span class="p">;</span>        <span class="cm">/* Saved EBP (for backtrace). */</span>
+
+  <span class="cm">/* 由 CPU 压入 */</span>
+  <span class="kt">void</span> <span class="p">(</span><span class="o">*</span><span class="n">eip</span><span class="p">)</span> <span class="p">(</span><span class="kt">void</span><span class="p">);</span>         <span class="cm">/* Next instruction. */</span>
+  <span class="kt">uint16_t</span> <span class="n">cs</span><span class="p">,</span> <span class="o">:</span><span class="mi">16</span><span class="p">;</span>           <span class="cm">/* Code segment. */</span>
+  <span class="kt">uint32_t</span> <span class="n">eflags</span><span class="p">;</span>            <span class="cm">/* CPU flags. */</span>
+  <span class="kt">void</span> <span class="o">*</span><span class="n">esp</span><span class="p">;</span>                  <span class="cm">/* Stack pointer. */</span>
+  <span class="kt">uint16_t</span> <span class="n">ss</span><span class="p">,</span> <span class="o">:</span><span class="mi">16</span><span class="p">;</span>           <span class="cm">/* Stack segment. */</span>
+<span class="p">};</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>栈布局图</strong>：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+</pre></td><td class="rouge-code"><pre>中断发生时的栈布局（从高地址到低地址）：
+
+┌─────────────────────────────────┐ 高地址
+│             SS                  │ ← (仅在特权级改变时)
+├─────────────────────────────────┤
+│             ESP                 │ ← (仅在特权级改变时)
+├─────────────────────────────────┤
+│           EFLAGS                │ ← CPU 压入
+├─────────────────────────────────┤
+│             CS                  │ ← CPU 压入
+├─────────────────────────────────┤
+│             EIP                 │ ← CPU 压入
+├─────────────────────────────────┤
+│         Error Code              │ ← CPU/存根 压入
+├─────────────────────────────────┤
+│        Frame Pointer            │ ← 存根 压入
+├─────────────────────────────────┤
+│          vec_no                 │ ← 存根 压入
+├─────────────────────────────────┤
+│           DS                    │ ← intr_entry 压入
+├─────────────────────────────────┤
+│           ES                    │
+├─────────────────────────────────┤
+│           FS                    │
+├─────────────────────────────────┤
+│           GS                    │
+├─────────────────────────────────┤
+│      EAX, ECX, EDX, EBX         │ ← PUSHA
+│      ESP_dummy, EBP, ESI, EDI   │
+└─────────────────────────────────┘ 低地址 (ESP 指向这里)
+</pre></td></tr></tbody></table></code></div></div>
+
+<h2 id="中断注册"><span class="me-2">中断注册</span><a href="#中断注册" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<h3 id="注册外部中断"><span class="me-2">注册外部中断</span><a href="#注册外部中断" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+</pre></td><td class="rouge-code"><pre><span class="kt">void</span>
+<span class="nf">intr_register_ext</span> <span class="p">(</span><span class="kt">uint8_t</span> <span class="n">vec_no</span><span class="p">,</span> <span class="n">intr_handler_func</span> <span class="o">*</span><span class="n">handler</span><span class="p">,</span>
+                   <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">name</span><span class="p">)</span> 
+<span class="p">{</span>
+  <span class="n">ASSERT</span> <span class="p">(</span><span class="n">vec_no</span> <span class="o">&gt;=</span> <span class="mh">0x20</span> <span class="o">&amp;&amp;</span> <span class="n">vec_no</span> <span class="o">&lt;=</span> <span class="mh">0x2f</span><span class="p">);</span>
+  <span class="n">register_handler</span> <span class="p">(</span><span class="n">vec_no</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">INTR_OFF</span><span class="p">,</span> <span class="n">handler</span><span class="p">,</span> <span class="n">name</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>使用示例</strong>（定时器）：</p>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+</pre></td><td class="rouge-code"><pre><span class="cm">/* timer.c */</span>
+<span class="kt">void</span>
+<span class="nf">timer_init</span> <span class="p">(</span><span class="kt">void</span><span class="p">)</span> 
+<span class="p">{</span>
+  <span class="cm">/* ... 配置 PIT ... */</span>
+  
+  <span class="n">intr_register_ext</span> <span class="p">(</span><span class="mh">0x20</span><span class="p">,</span> <span class="n">timer_interrupt</span><span class="p">,</span> <span class="s">"8254 Timer"</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<h3 id="注册内部中断"><span class="me-2">注册内部中断</span><a href="#注册内部中断" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+</pre></td><td class="rouge-code"><pre><span class="kt">void</span>
+<span class="nf">intr_register_int</span> <span class="p">(</span><span class="kt">uint8_t</span> <span class="n">vec_no</span><span class="p">,</span> <span class="kt">int</span> <span class="n">dpl</span><span class="p">,</span> <span class="k">enum</span> <span class="n">intr_level</span> <span class="n">level</span><span class="p">,</span>
+                   <span class="n">intr_handler_func</span> <span class="o">*</span><span class="n">handler</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">name</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">ASSERT</span> <span class="p">(</span><span class="n">vec_no</span> <span class="o">&lt;</span> <span class="mh">0x20</span> <span class="o">||</span> <span class="n">vec_no</span> <span class="o">&gt;</span> <span class="mh">0x2f</span><span class="p">);</span>
+  <span class="n">register_handler</span> <span class="p">(</span><span class="n">vec_no</span><span class="p">,</span> <span class="n">dpl</span><span class="p">,</span> <span class="n">level</span><span class="p">,</span> <span class="n">handler</span><span class="p">,</span> <span class="n">name</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>使用示例</strong>（缺页异常）：</p>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+</pre></td><td class="rouge-code"><pre><span class="cm">/* exception.c */</span>
+<span class="kt">void</span>
+<span class="nf">exception_init</span> <span class="p">(</span><span class="kt">void</span><span class="p">)</span> 
+<span class="p">{</span>
+  <span class="cm">/* ... */</span>
+  
+  <span class="n">intr_register_int</span> <span class="p">(</span><span class="mi">14</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">INTR_OFF</span><span class="p">,</span> <span class="n">page_fault</span><span class="p">,</span> <span class="s">"#PF Page-Fault Exception"</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<h3 id="register_handler-实现"><span class="me-2">register_handler() 实现</span><a href="#register_handler-实现" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+</pre></td><td class="rouge-code"><pre><span class="k">static</span> <span class="kt">void</span>
+<span class="nf">register_handler</span> <span class="p">(</span><span class="kt">uint8_t</span> <span class="n">vec_no</span><span class="p">,</span> <span class="kt">int</span> <span class="n">dpl</span><span class="p">,</span> <span class="k">enum</span> <span class="n">intr_level</span> <span class="n">level</span><span class="p">,</span>
+                  <span class="n">intr_handler_func</span> <span class="o">*</span><span class="n">handler</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">name</span><span class="p">)</span>
+<span class="p">{</span>
+  <span class="n">ASSERT</span> <span class="p">(</span><span class="n">intr_handlers</span><span class="p">[</span><span class="n">vec_no</span><span class="p">]</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">);</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">level</span> <span class="o">==</span> <span class="n">INTR_ON</span><span class="p">)</span>
+    <span class="n">idt</span><span class="p">[</span><span class="n">vec_no</span><span class="p">]</span> <span class="o">=</span> <span class="n">make_trap_gate</span> <span class="p">(</span><span class="n">intr_stubs</span><span class="p">[</span><span class="n">vec_no</span><span class="p">],</span> <span class="n">dpl</span><span class="p">);</span>
+  <span class="k">else</span>
+    <span class="n">idt</span><span class="p">[</span><span class="n">vec_no</span><span class="p">]</span> <span class="o">=</span> <span class="n">make_intr_gate</span> <span class="p">(</span><span class="n">intr_stubs</span><span class="p">[</span><span class="n">vec_no</span><span class="p">],</span> <span class="n">dpl</span><span class="p">);</span>
+  <span class="n">intr_handlers</span><span class="p">[</span><span class="n">vec_no</span><span class="p">]</span> <span class="o">=</span> <span class="n">handler</span><span class="p">;</span>
+  <span class="n">intr_names</span><span class="p">[</span><span class="n">vec_no</span><span class="p">]</span> <span class="o">=</span> <span class="n">name</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>关键选择</strong>：</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">INTR_ON</code>：使用陷阱门（不自动关中断）→ 允许中断嵌套</li>
+  <li><code class="language-plaintext highlighter-rouge">INTR_OFF</code>：使用中断门（自动关中断）→ 禁止中断嵌套</li>
+</ul>
+
+<h2 id="pic-eoi-处理"><span class="me-2">PIC EOI 处理</span><a href="#pic-eoi-处理" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+</pre></td><td class="rouge-code"><pre><span class="k">static</span> <span class="kt">void</span>
+<span class="nf">pic_end_of_interrupt</span> <span class="p">(</span><span class="kt">int</span> <span class="n">irq</span><span class="p">)</span> 
+<span class="p">{</span>
+  <span class="n">ASSERT</span> <span class="p">(</span><span class="n">irq</span> <span class="o">&gt;=</span> <span class="mh">0x20</span> <span class="o">&amp;&amp;</span> <span class="n">irq</span> <span class="o">&lt;</span> <span class="mh">0x30</span><span class="p">);</span>
+
+  <span class="cm">/* Acknowledge master PIC. */</span>
+  <span class="n">outb</span> <span class="p">(</span><span class="mh">0x20</span><span class="p">,</span> <span class="mh">0x20</span><span class="p">);</span>
+
+  <span class="cm">/* Acknowledge slave PIC if this is a slave interrupt. */</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">irq</span> <span class="o">&gt;=</span> <span class="mh">0x28</span><span class="p">)</span>
+    <span class="n">outb</span> <span class="p">(</span><span class="mh">0xa0</span><span class="p">,</span> <span class="mh">0x20</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>EOI 流程</strong>：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="code-header">
+        <span data-label-text="Plaintext"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+</pre></td><td class="rouge-code"><pre>IRQ 0-7 (主 PIC):
+    │
+    └─→ 向主 PIC 发送 EOI
+        outb(0x20, 0x20)
+
+IRQ 8-15 (从 PIC):
+    │
+    ├─→ 向主 PIC 发送 EOI
+    │   outb(0x20, 0x20)
+    │
+    └─→ 向从 PIC 发送 EOI
+        outb(0xa0, 0x20)
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>为什么从 PIC 中断需要两个 EOI</strong>？</p>
+
+<p>因为从 PIC 是级联到主 PIC 的 IR2，所以：</p>
+<ol>
+  <li>从 PIC 需要知道中断处理完成</li>
+  <li>主 PIC 也需要知道（释放 IR2 线）</li>
+</ol>
+
+<h2 id="常见问题解答"><span class="me-2">常见问题解答</span><a href="#常见问题解答" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<h3 id="q1-为什么需要重映射-pic"><span class="me-2">Q1: 为什么需要重映射 PIC？</span><a href="#q1-为什么需要重映射-pic" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p><strong>A</strong>:</p>
+<ul>
+  <li>x86 架构规定向量 0-31 用于 CPU 异常</li>
+  <li>默认 PIC 将 IRQ 0-15 映射到向量 0-15</li>
+  <li>这与 CPU 异常冲突</li>
+  <li>重映射到 32-47 避免冲突</li>
+</ul>
+
+<h3 id="q2-中断门和陷阱门的实际区别"><span class="me-2">Q2: 中断门和陷阱门的实际区别？</span><a href="#q2-中断门和陷阱门的实际区别" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p><strong>A</strong>:</p>
+<ul>
+  <li>中断门：进入时自动 <code class="language-plaintext highlighter-rouge">CLI</code>（关中断）</li>
+  <li>陷阱门：保持中断状态不变</li>
+  <li>效果：中断门处理程序开始时中断是关闭的</li>
+</ul>
+
+<h3 id="q3-为什么外部中断处理要关中断"><span class="me-2">Q3: 为什么外部中断处理要关中断？</span><a href="#q3-为什么外部中断处理要关中断" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p><strong>A</strong>:</p>
+<ol>
+  <li>防止中断嵌套导致栈溢出</li>
+  <li>简化中断处理程序的编写</li>
+  <li>Pintos 的设计选择，不是必须的</li>
+</ol>
+
+<h3 id="q4-yield_on_return-有什么用"><span class="me-2">Q4: yield_on_return 有什么用？</span><a href="#q4-yield_on_return-有什么用" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p><strong>A</strong>:</p>
+<ul>
+  <li>允许中断处理程序请求线程切换</li>
+  <li>例如：定时器中断检测到时间片用完</li>
+  <li>在返回前（而不是中断处理中）切换，保证原子性</li>
+</ul>
+
+<h2 id="练习题"><span class="me-2">练习题</span><a href="#练习题" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<h3 id="练习1pic-重映射验证"><span class="me-2">练习1：PIC 重映射验证</span><a href="#练习1pic-重映射验证" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>修改 <code class="language-plaintext highlighter-rouge">pic_init()</code>，将硬件中断映射到向量 64-79，需要修改哪些代码？</p>
+
+<h3 id="练习2中断计数器"><span class="me-2">练习2：中断计数器</span><a href="#练习2中断计数器" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>添加功能，统计每种中断发生的次数，并提供函数查询：</p>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+</pre></td><td class="rouge-code"><pre><span class="kt">unsigned</span> <span class="kt">int</span> <span class="nf">intr_get_count</span><span class="p">(</span><span class="kt">uint8_t</span> <span class="n">vec_no</span><span class="p">);</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<h3 id="练习3理解中断优先级"><span class="me-2">练习3：理解中断优先级</span><a href="#练习3理解中断优先级" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>分析以下场景：</p>
+<ol>
+  <li>CPU 正在处理定时器中断（IRQ0，向量 0x20）</li>
+  <li>此时键盘产生中断（IRQ1，向量 0x21）</li>
+  <li>中断会被如何处理？</li>
+</ol>
+
+<h3 id="练习4实现中断屏蔽"><span class="me-2">练习4：实现中断屏蔽</span><a href="#练习4实现中断屏蔽" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h3>
+
+<p>实现函数来单独屏蔽/解除屏蔽特定 IRQ：</p>
+
+<div class="language-c highlighter-rouge"><div class="code-header">
+        <span data-label-text="C"><i class="fas fa-code fa-fw small"></i></span>
+      <button aria-label="copy" data-title-succeed="已复制！"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+</pre></td><td class="rouge-code"><pre><span class="kt">void</span> <span class="nf">irq_mask</span><span class="p">(</span><span class="kt">int</span> <span class="n">irq</span><span class="p">);</span>
+<span class="kt">void</span> <span class="nf">irq_unmask</span><span class="p">(</span><span class="kt">int</span> <span class="n">irq</span><span class="p">);</span>
+</pre></td></tr></tbody></table></code></div></div>
+
+<p><strong>提示</strong>：操作 PIC 的 IMR（中断屏蔽寄存器）。</p>
+
+<h2 id="下一篇预告"><span class="me-2">下一篇预告</span><a href="#下一篇预告" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<p>在下一篇文档中，我们将详细解析设备初始化过程，了解 Pintos 如何初始化定时器、键盘、串口等硬件设备。</p>
+
+<h2 id="参考资料"><span class="me-2">参考资料</span><a href="#参考资料" class="anchor text-muted"><i class="fas fa-hashtag"></i></a></h2>
+
+<ol>
+  <li><a href="https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html">Intel 64 and IA-32 Architectures Software Developer’s Manual, Volume 3A</a> - Chapter 6: Interrupt and Exception Handling</li>
+  <li><a href="https://pdos.csail.mit.edu/6.828/2018/readings/hardware/8259A.pdf">8259A Programmable Interrupt Controller Datasheet</a></li>
+  <li><a href="https://wiki.osdev.org/8259_PIC">OSDev Wiki - 8259 PIC</a></li>
+  <li><a href="https://wiki.osdev.org/Interrupt_Descriptor_Table">OSDev Wiki - Interrupt Descriptor Table</a></li>
+</ol>
+
+  </div>
+
+  <div class="post-tail-wrapper text-muted">
+    <!-- categories -->
+    
+
+    <!-- tags -->
+    
+
+    <div
+      class="
+        post-tail-bottom
+        d-flex justify-content-between align-items-center mt-5 pb-2
+      "
+    >
+      <div class="license-wrapper">
+        
+          
+
+          本文由作者按照 
+        <a href="https://creativecommons.org/licenses/by/4.0/">
+          CC BY 4.0
+        </a>
+         进行授权
+        
+      </div>
+
+      <!-- Post sharing snippet -->
+
+<div class="share-wrapper d-flex align-items-center">
+  <span class="share-label text-muted">分享</span>
+  <span class="share-icons">
+    
+    
+    
+
+    
+
+    <button
+      id="copy-link"
+      aria-label="Copy link"
+      class="btn small"
+      data-bs-toggle="tooltip"
+      data-bs-placement="top"
+      title="分享链接"
+      data-title-succeed="链接已复制！"
+    >
+      <i class="fa-fw fas fa-link pe-none fs-6"></i>
+    </button>
+  </span>
+</div>
+
+    </div>
+    <!-- .post-tail-bottom -->
+  </div>
+  <!-- div.post-tail-wrapper -->
+</article>
+
+
+            
+          </main>
+
+          <!-- panel -->
+          <aside aria-label="Panel" id="panel-wrapper" class="col-xl-3 ps-2 text-muted">
+            <div class="access">
+              <!-- Get 5 last posted/updated posts -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <section id="access-lastmod">
+    <h2 class="panel-heading">最近更新</h2>
+    <ul class="content list-unstyled ps-0 pb-1 ms-1 mt-2">
+      
+        
+        
+        
+        <li class="text-truncate lh-lg">
+          <a href="/posts/pintos-thread-03-create/">Pintos 线程系统详解（三）：线程创建</a>
+        </li>
+      
+        
+        
+        
+        <li class="text-truncate lh-lg">
+          <a href="/posts/pintos-thread-04-schedule/">Pintos 线程系统详解（四）：线程调度</a>
+        </li>
+      
+        
+        
+        
+        <li class="text-truncate lh-lg">
+          <a href="/posts/pintos-thread-05-switch/">Pintos 线程系统详解（五）：上下文切换</a>
+        </li>
+      
+        
+        
+        
+        <li class="text-truncate lh-lg">
+          <a href="/posts/pintos-thread-06-block-unblock/">Pintos 线程系统详解（六）：阻塞与唤醒</a>
+        </li>
+      
+        
+        
+        
+        <li class="text-truncate lh-lg">
+          <a href="/posts/pintos-thread-07-semaphore/">Pintos 线程系统详解（七）：信号量</a>
+        </li>
+      
+    </ul>
+  </section>
+  <!-- #access-lastmod -->
+
+
+              <!-- The trending tags list -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+
+
+  <section>
+    <h2 class="panel-heading">热门标签</h2>
+    <div class="d-flex flex-wrap mt-3 mb-1 me-3">
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/os/">OS</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/pintos/">Pintos</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E6%B1%87%E7%BC%96/">汇编</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E5%BC%95%E5%AF%BC%E5%8A%A0%E8%BD%BD%E7%A8%8B%E5%BA%8F/">引导加载程序</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E7%BA%BF%E7%A8%8B/">线程</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E5%86%85%E6%A0%B8/">内核</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E5%90%8C%E6%AD%A5/">同步</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/c%E8%AF%AD%E8%A8%80/">C语言</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/gdt/">GDT</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/x86/">x86</a>
+      
+    </div>
+  </section>
+
+
+            </div>
+
+            
+              
+              
+
+
+
+
+
+
+  <div class="toc-border-cover z-3"></div>
+  <section id="toc-wrapper" class="invisible position-sticky ps-0 pe-4 pb-4">
+    <h2 class="panel-heading ps-3 pb-2 mb-0">文章内容</h2>
+    <nav id="toc"></nav>
+  </section>
+
+
+            
+          </aside>
+        </div>
+
+        <div class="row">
+          <!-- tail -->
+          <div id="tail-wrapper" class="col-12 col-lg-11 col-xl-9 px-md-4">
+            
+              
+              <!-- Recommend the other 3 posts according to the tags and categories of the current post. -->
+
+<!-- The total size of related posts -->
+
+
+<!-- An random integer that bigger than 0 -->
+
+
+<!-- Equals to TAG_SCORE / {max_categories_hierarchy} -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            
+              
+              <!-- Navigation buttons at the bottom of the post. -->
+
+<nav class="post-navigation d-flex justify-content-between" aria-label="Post Navigation">
+  
+  
+
+  
+    <a
+      href="/posts/pintos-kernel-12-thread-init/"
+      class="btn btn-outline-primary"
+      aria-label="上一篇"
+    >
+      <p>Pintos Kernel 12 Thread Init</p>
+    </a>
+  
+
+  
+    <a
+      href="/posts/pintos-kernel-14-device-init/"
+      class="btn btn-outline-primary"
+      aria-label="下一篇"
+    >
+      <p>Pintos Kernel 14 Device Init</p>
+    </a>
+  
+</nav>
+
+            
+
+            <!-- The Footer -->
+
+<footer
+  aria-label="Site Info"
+  class="
+    d-flex flex-column justify-content-center text-muted
+    flex-lg-row justify-content-lg-between align-items-lg-center pb-lg-3
+  "
+>
+  <p>©
+    <time>2026</time>
+
+    
+      <a href="https://github.com/zxsheather">Zxsheather</a>.
+    
+
+    
+      <span
+        data-bs-toggle="tooltip"
+        data-bs-placement="top"
+        title="除非另有说明，本网站上的博客文章均由作者按照知识共享署名 4.0 国际 (CC BY 4.0) 许可协议进行授权。"
+      >保留部分权利。</span>
+    
+  </p>
+
+  <p>本站采用 <a href="https://jekyllrb.com" target="_blank" rel="noopener">Jekyll</a> 主题 <a
+        data-bs-toggle="tooltip"
+        data-bs-placement="top"
+        title="v7.4.1"
+        href="https://github.com/cotes2020/jekyll-theme-chirpy"
+        target="_blank"
+        rel="noopener"
+      >Chirpy</a>
+  </p>
+</footer>
+
+          </div>
+        </div>
+
+        <!-- The Search results -->
+
+<div id="search-result-wrapper" class="d-flex justify-content-center d-none">
+  <div class="col-11 content">
+    <div id="search-hints">
+      <!-- The trending tags list -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+  
+    
+    
+    
+    
+      
+        
+        
+
+
+
+  <section>
+    <h2 class="panel-heading">热门标签</h2>
+    <div class="d-flex flex-wrap mt-3 mb-1 me-3">
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/os/">OS</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/pintos/">Pintos</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E6%B1%87%E7%BC%96/">汇编</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E5%BC%95%E5%AF%BC%E5%8A%A0%E8%BD%BD%E7%A8%8B%E5%BA%8F/">引导加载程序</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E7%BA%BF%E7%A8%8B/">线程</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E5%86%85%E6%A0%B8/">内核</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/%E5%90%8C%E6%AD%A5/">同步</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/c%E8%AF%AD%E8%A8%80/">C语言</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/gdt/">GDT</a>
+      
+        
+        <a class="post-tag btn btn-outline-primary" href="/tags/x86/">x86</a>
+      
+    </div>
+  </section>
+
+
+    </div>
+    <div id="search-results" class="d-flex flex-wrap justify-content-center text-muted mt-3"></div>
+  </div>
+</div>
+
+      </div>
+
+      <aside aria-label="Scroll to Top">
+        <button id="back-to-top" type="button" class="btn btn-lg btn-box-shadow">
+          <i class="fas fa-angle-up"></i>
+        </button>
+      </aside>
+    </div>
+
+    <div id="mask" class="d-none position-fixed w-100 h-100 z-1"></div>
+
+    
+      <aside
+  id="notification"
+  class="toast"
+  role="alert"
+  aria-live="assertive"
+  aria-atomic="true"
+  data-bs-animation="true"
+  data-bs-autohide="false"
+>
+  <div class="toast-header">
+    <button
+      type="button"
+      class="btn-close ms-auto"
+      data-bs-dismiss="toast"
+      aria-label="Close"
+    ></button>
+  </div>
+  <div class="toast-body text-center pt-0">
+    <p class="px-2 mb-3">发现新版本的内容。</p>
+    <button type="button" class="btn btn-primary" aria-label="Update">
+      更新
+    </button>
+  </div>
+</aside>
+
+    
+
+    <!-- Embedded scripts -->
+
+    
+      
+      <!-- The comments switcher -->
+
+
+    
+
+    <!--
+  Jekyll Simple Search loader
+  See: <https://github.com/christian-fei/Simple-Jekyll-Search>
+-->
+
+
+
+
+
+<script>
+  
+  document.addEventListener('DOMContentLoaded', () => {
+    SimpleJekyllSearch({
+      searchInput: document.getElementById('search-input'),
+      resultsContainer: document.getElementById('search-results'),
+      json: '/assets/js/data/search.json',
+      searchResultTemplate: '  <article class="px-1 px-sm-2 px-lg-4 px-xl-0">    <header>      <h2><a href="{url}">{title}</a></h2>      <div class="post-meta d-flex flex-column flex-sm-row text-muted mt-1 mb-1">        {categories}        {tags}      </div>    </header>    <p>{content}</p>  </article>',
+      noResultsText: '<p class="mt-5">搜索结果为空</p>',
+      templateMiddleware: function(prop, value, template) {
+        if (prop === 'categories') {
+          if (value === '') {
+            return `${value}`;
+          } else {
+            return `<div class="me-sm-4"><i class="far fa-folder fa-fw"></i>${value}</div>`;
+          }
+        }
+
+        if (prop === 'tags') {
+          if (value === '') {
+            return `${value}`;
+          } else {
+            return `<div><i class="fa fa-tag fa-fw"></i>${value}</div>`;
+          }
+        }
+      }
+    });
+  });
+</script>
+
+  </body>
+</html>
+

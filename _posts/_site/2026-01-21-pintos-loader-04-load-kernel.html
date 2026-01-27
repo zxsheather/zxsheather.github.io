@@ -1,0 +1,544 @@
+<h2 id="概述">概述</h2>
+
+<p>找到 Pintos 内核分区后，这部分代码负责将内核从磁盘读取到内存中。这是引导加载程序最重要的工作之一。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#### We found a kernel.  The kernel's drive is in DL.  The partition
+#### table entry for the kernel's partition is at ES:SI.  Our job now
+#### is to read the kernel from disk and jump to its start address.
+
+load_kernel:
+	call puts
+	.string "\rLoading"
+
+	# Figure out number of sectors to read.  A Pintos kernel is
+	# just an ELF format object, which doesn't have an
+	# easy-to-read field to identify its own size (see [ELF1]).
+	# But we limit Pintos kernels to 512 kB for other reasons, so
+	# it's easy enough to just read the entire contents of the
+	# partition or 512 kB from disk, whichever is smaller.
+	mov %es:12(%si), %ecx		# EBP = number of sectors
+	cmp $1024, %ecx			# Cap size at 512 kB
+	jbe 1f
+	mov $1024, %cx
+1:
+
+	mov %es:8(%si), %ebx		# EBX = first sector
+	mov $0x2000, %ax		# Start load address: 0x20000
+
+next_sector:
+	# Read one sector into memory.
+	mov %ax, %es			# ES:0000 -&gt; load address
+	call read_sector
+	jc read_failed
+
+	# Print '.' as progress indicator once every 16 sectors == 8 kB.
+	test $15, %bl
+	jnz 1f
+	call puts
+	.string "."
+1:
+
+	# Advance memory pointer and disk sector.
+	add $0x20, %ax
+	inc %bx
+	loop next_sector
+
+	call puts
+	.string "\r"
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="前置知识">前置知识</h2>
+
+<h3 id="什么是-elf-格式">什么是 ELF 格式？</h3>
+
+<p>ELF（Executable and Linkable Format）是 Linux/Unix 系统上最常用的可执行文件格式。Pintos 内核就是一个 ELF 文件。</p>
+
+<p><strong>ELF 文件的基本结构：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>┌─────────────────────────┐
+│      ELF 头部           │ ← 包含入口地址、程序头表位置等
+├─────────────────────────┤
+│     程序头表            │ ← 描述各段如何加载到内存
+├─────────────────────────┤
+│                         │
+│     代码段 (.text)      │ ← 可执行指令
+│                         │
+├─────────────────────────┤
+│                         │
+│     数据段 (.data)      │ ← 初始化的全局变量
+│                         │
+├─────────────────────────┤
+│     其他段...           │
+└─────────────────────────┘
+</code></pre></div></div>
+
+<h3 id="为什么限制内核大小为-512kb">为什么限制内核大小为 512KB？</h3>
+
+<ol>
+  <li><strong>实模式内存限制</strong>：在实模式下，只能访问 1MB 内存</li>
+  <li><strong>加载地址</strong>：内核加载到 0x20000（128KB），到 640KB（0xA0000）有约 512KB 空间</li>
+  <li><strong>简化代码</strong>：限制大小可以避免复杂的内存管理</li>
+</ol>
+
+<h3 id="内存布局">内存布局</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>地址              内容
+───────────────────────────────────
+0x00000          中断向量表、BIOS 数据
+...
+0x07C00          Loader 代码
+0x07E00          Loader 结束
+...
+0x20000  ←────── 内核加载起始地址
+...
+0xA0000  ←────── 内核加载结束地址（最大）
+...
+0xA0000-0xFFFFF  显存和 BIOS ROM
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="逐行详解">逐行详解</h2>
+
+<h3 id="阶段-1打印加载信息">阶段 1：打印加载信息</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>load_kernel:
+	call puts
+	.string "\rLoading"
+</code></pre></div></div>
+
+<p>打印 “Loading”，告诉用户内核正在加载。</p>
+
+<p><code class="language-plaintext highlighter-rouge">\r</code>（回车符）将光标移动到行首，覆盖之前的 “Pintos hdaX” 输出。</p>
+
+<hr />
+
+<h3 id="阶段-2计算要读取的扇区数">阶段 2：计算要读取的扇区数</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	mov %es:12(%si), %ecx		# ECX = number of sectors
+	cmp $1024, %ecx			# Cap size at 512 kB
+	jbe 1f
+	mov $1024, %cx
+1:
+</code></pre></div></div>
+
+<p><strong>逐行解释：</strong></p>
+
+<ol>
+  <li><strong><code class="language-plaintext highlighter-rouge">mov %es:12(%si), %ecx</code></strong>：
+    <ul>
+      <li>从分区表项偏移 12 处读取 4 字节（扇区数）</li>
+      <li>存入 ECX 寄存器</li>
+    </ul>
+
+    <p>回顾分区表项结构：</p>
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>偏移 0:  启动标志
+偏移 4:  分区类型
+偏移 8:  起始 LBA（4 字节）
+偏移 12: 扇区总数（4 字节）← 我们读取这里
+</code></pre></div>    </div>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">cmp $1024, %ecx</code></strong>：
+    <ul>
+      <li>比较 ECX 和 1024</li>
+      <li>1024 扇区 × 512 字节/扇区 = 512KB</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">jbe 1f</code></strong>：
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">jbe</code> = Jump if Below or Equal（无符号小于等于则跳转）</li>
+      <li><code class="language-plaintext highlighter-rouge">1f</code> = 向前（forward）找标签 <code class="language-plaintext highlighter-rouge">1:</code></li>
+      <li>如果扇区数 ≤ 1024，跳过下一条指令</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">mov $1024, %cx</code></strong>：
+    <ul>
+      <li>如果扇区数 &gt; 1024，将其限制为 1024</li>
+      <li>注意这里只修改 CX（16 位），高 16 位被清零，但没关系因为 1024 足够用 16 位表示</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>为什么要限制大小？</strong></p>
+
+<ul>
+  <li>保护内存：防止覆盖 640KB 以上的系统区域</li>
+  <li>简化循环：<code class="language-plaintext highlighter-rouge">loop</code> 指令使用 CX，16 位足够</li>
+</ul>
+
+<hr />
+
+<h3 id="阶段-3获取起始扇区号">阶段 3：获取起始扇区号</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	mov %es:8(%si), %ebx		# EBX = first sector
+	mov $0x2000, %ax		# Start load address: 0x20000
+</code></pre></div></div>
+
+<ol>
+  <li><strong><code class="language-plaintext highlighter-rouge">mov %es:8(%si), %ebx</code></strong>：
+    <ul>
+      <li>从分区表项偏移 8 处读取起始 LBA</li>
+      <li>这是内核在磁盘上的第一个扇区</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">mov $0x2000, %ax</code></strong>：
+    <ul>
+      <li>设置加载地址的段部分</li>
+      <li>段地址 0x2000 × 16 = 线性地址 0x20000</li>
+    </ul>
+  </li>
+</ol>
+
+<hr />
+
+<h3 id="阶段-4读取扇区循环">阶段 4：读取扇区循环</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>next_sector:
+	# Read one sector into memory.
+	mov %ax, %es			# ES:0000 -&gt; load address
+	call read_sector
+	jc read_failed
+</code></pre></div></div>
+
+<p><strong>循环开始：</strong></p>
+
+<ol>
+  <li><strong><code class="language-plaintext highlighter-rouge">mov %ax, %es</code></strong>：设置 ES 段寄存器为当前加载地址</li>
+  <li><strong><code class="language-plaintext highlighter-rouge">call read_sector</code></strong>：读取一个扇区到 ES:0000
+    <ul>
+      <li>DL = 硬盘号（在整个过程中保持不变）</li>
+      <li>EBX = 扇区号</li>
+      <li>ES:0 = 目标内存地址</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">jc read_failed</code></strong>：如果读取失败（CF=1），跳转到错误处理</li>
+</ol>
+
+<hr />
+
+<h3 id="阶段-5显示进度">阶段 5：显示进度</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	# Print '.' as progress indicator once every 16 sectors == 8 kB.
+	test $15, %bl
+	jnz 1f
+	call puts
+	.string "."
+1:
+</code></pre></div></div>
+
+<p><strong>每 16 个扇区打印一个点。</strong></p>
+
+<ol>
+  <li><strong><code class="language-plaintext highlighter-rouge">test $15, %bl</code></strong>：
+    <ul>
+      <li>测试 BL 的低 4 位是否为 0</li>
+      <li><code class="language-plaintext highlighter-rouge">test</code> 指令执行 AND 运算，只设置标志位，不保存结果</li>
+      <li>15 = 0b1111 = 0xF</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">jnz 1f</code></strong>：
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">jnz</code> = Jump if Not Zero（如果结果不为零则跳转）</li>
+      <li>如果 BL &amp; 0xF ≠ 0，跳过打印</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>为什么是 16 扇区？</strong></p>
+
+<ul>
+  <li>16 扇区 × 512 字节 = 8KB</li>
+  <li>512KB 内核 / 8KB = 64 个点</li>
+  <li>这样可以显示合理的进度，不会太快也不会太慢</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">test</code> 指令详解：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>BL 值</th>
+      <th>BL &amp; 15</th>
+      <th>结果</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0</td>
+      <td>0 &amp; 15 = 0</td>
+      <td>打印</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>1 &amp; 15 = 1</td>
+      <td>不打印</td>
+    </tr>
+    <tr>
+      <td>15</td>
+      <td>15 &amp; 15 = 15</td>
+      <td>不打印</td>
+    </tr>
+    <tr>
+      <td>16</td>
+      <td>16 &amp; 15 = 0</td>
+      <td>打印</td>
+    </tr>
+    <tr>
+      <td>32</td>
+      <td>32 &amp; 15 = 0</td>
+      <td>打印</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h3 id="阶段-6前进到下一个扇区">阶段 6：前进到下一个扇区</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	# Advance memory pointer and disk sector.
+	add $0x20, %ax
+	inc %bx
+	loop next_sector
+</code></pre></div></div>
+
+<ol>
+  <li><strong><code class="language-plaintext highlighter-rouge">add $0x20, %ax</code></strong>：
+    <ul>
+      <li>内存地址增加 0x20 个段单位</li>
+      <li>0x20 × 16 = 512 字节 = 1 个扇区</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">inc %bx</code></strong>：
+    <ul>
+      <li>扇区号加 1</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">loop next_sector</code></strong>：
+    <ul>
+      <li>CX 减 1</li>
+      <li>如果 CX ≠ 0，跳转到 <code class="language-plaintext highlighter-rouge">next_sector</code> 继续循环</li>
+      <li>如果 CX = 0，循环结束</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong><code class="language-plaintext highlighter-rouge">loop</code> 指令的等效代码：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>loop next_sector
+# 等价于：
+dec %cx
+jnz next_sector
+</code></pre></div></div>
+
+<hr />
+
+<h3 id="阶段-7完成加载">阶段 7：完成加载</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	call puts
+	.string "\r"
+</code></pre></div></div>
+
+<p>打印回车符，准备下一行输出。</p>
+
+<hr />
+
+<h2 id="内存变化示意图">内存变化示意图</h2>
+
+<p><strong>加载过程中内存的变化：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>初始状态：
+                    0x20000  0x20200  0x20400  ...
+                    ┌────────┬────────┬────────┬───
+内存:               │  空    │  空    │  空    │
+                    └────────┴────────┴────────┴───
+
+读取扇区 0 后：
+                    ┌────────┬────────┬────────┬───
+内存:               │扇区 0  │  空    │  空    │
+                    └────────┴────────┴────────┴───
+                    ES=0x2000
+
+读取扇区 1 后：
+                    ┌────────┬────────┬────────┬───
+内存:               │扇区 0  │扇区 1  │  空    │
+                    └────────┴────────┴────────┴───
+                             ES=0x2020
+
+读取扇区 2 后：
+                    ┌────────┬────────┬────────┬───
+内存:               │扇区 0  │扇区 1  │扇区 2  │
+                    └────────┴────────┴────────┴───
+                                      ES=0x2040
+
+... 继续直到读完所有扇区 ...
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="加载地址计算示例">加载地址计算示例</h2>
+
+<p>假设内核占 100 个扇区（约 50KB）：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>循环次数</th>
+      <th>CX</th>
+      <th>EBX (扇区)</th>
+      <th>AX (段)</th>
+      <th>ES:0 (线性地址)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>100</td>
+      <td>N</td>
+      <td>0x2000</td>
+      <td>0x20000</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>99</td>
+      <td>N+1</td>
+      <td>0x2020</td>
+      <td>0x20200</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>98</td>
+      <td>N+2</td>
+      <td>0x2040</td>
+      <td>0x20400</td>
+    </tr>
+    <tr>
+      <td>…</td>
+      <td>…</td>
+      <td>…</td>
+      <td>…</td>
+      <td>…</td>
+    </tr>
+    <tr>
+      <td>100</td>
+      <td>1</td>
+      <td>N+99</td>
+      <td>0x3260</td>
+      <td>0x32600</td>
+    </tr>
+    <tr>
+      <td>结束</td>
+      <td>0</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>其中 N 是分区的起始扇区号。</p>
+
+<hr />
+
+<h2 id="实际输出示例">实际输出示例</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Loading..............................................................
+</code></pre></div></div>
+
+<ul>
+  <li>“Loading” 后面跟着很多点</li>
+  <li>每个点代表 8KB 已加载</li>
+  <li>如果内核是 256KB，会有 32 个点</li>
+</ul>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-如果分区比-512kb-小会怎样">Q1: 如果分区比 512KB 小会怎样？</h3>
+
+<p>代码只读取分区实际包含的扇区数。假设分区只有 100 扇区（50KB），就只读取 100 扇区。</p>
+
+<h3 id="q2-为什么段地址每次增加-0x20">Q2: 为什么段地址每次增加 0x20？</h3>
+
+<p>在实模式下：</p>
+<ul>
+  <li>物理地址 = 段地址 × 16 + 偏移</li>
+  <li>一个扇区 = 512 字节</li>
+  <li>段地址增加 0x20 意味着物理地址增加 0x20 × 16 = 512 字节</li>
+</ul>
+
+<h3 id="q3-为什么使用-16-位的-bx-而不是-32-位的-ebx">Q3: 为什么使用 16 位的 BX 而不是 32 位的 EBX？</h3>
+
+<p>实际上代码用 <code class="language-plaintext highlighter-rouge">inc %bx</code> 只增加 BX 的低 16 位。对于小于 32MB 的分区（64K 扇区），这足够了。Pintos 的设计假设不会有这么大的分区。</p>
+
+<h3 id="q4-读取失败的原因有哪些">Q4: 读取失败的原因有哪些？</h3>
+
+<ul>
+  <li>硬盘物理故障</li>
+  <li>扇区号超出范围</li>
+  <li>BIOS 驱动问题</li>
+  <li>模拟器配置错误</li>
+</ul>
+
+<h3 id="q5-为什么注释说-ecx--ebp">Q5: 为什么注释说 ECX = EBP？</h3>
+
+<p>这是代码中的一个<strong>注释错误</strong>。应该是 “ECX = number of sectors”，不是 EBP。代码本身是正确的。</p>
+
+<hr />
+
+<h2 id="性能考虑">性能考虑</h2>
+
+<h3 id="每次只读一个扇区是否低效">每次只读一个扇区是否低效？</h3>
+
+<p>是的，但有几个原因：</p>
+
+<ol>
+  <li><strong>简单性</strong>：代码更简单，更可靠</li>
+  <li><strong>512 字节限制</strong>：引导扇区空间有限</li>
+  <li><strong>兼容性</strong>：某些老 BIOS 每次只能读有限扇区</li>
+</ol>
+
+<p>现代引导加载程序（如 GRUB）会使用更高效的多扇区读取。</p>
+
+<h3 id="加载时间估算">加载时间估算</h3>
+
+<p>假设：</p>
+<ul>
+  <li>硬盘读取速度：50MB/s</li>
+  <li>内核大小：512KB</li>
+</ul>
+
+<p>加载时间 ≈ 512KB / 50MB/s ≈ 10ms</p>
+
+<p>实际上大部分时间花在 BIOS 中断调用的开销上，但对于启动过程来说仍然很快。</p>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果要支持大于 512KB 的内核，需要修改哪些地方？</p>
+  </li>
+  <li>
+    <p>为什么进度显示选择每 16 扇区一个点，而不是每 8 扇区或每 32 扇区？</p>
+  </li>
+  <li>
+    <p>如果内核恰好是 0 字节（空分区），这段代码会发生什么？</p>
+  </li>
+  <li>
+    <p><code class="language-plaintext highlighter-rouge">loop</code> 指令只检查 CX（16 位），如果需要读取超过 65535 个扇区怎么办？</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="下一部分">下一部分</h2>
+
+<p>内核加载到内存后，下一步是跳转到内核入口点执行。请参阅下一篇文章。</p>

@@ -1,0 +1,540 @@
+<h2 id="概述">概述</h2>
+
+<p><code class="language-plaintext highlighter-rouge">loader.S</code> 的末尾定义了一些重要的数据结构，包括命令行参数区域、分区表区域和引导签名。这些结构使 512 字节的引导扇区符合 BIOS 规范，并允许外部工具（如 <code class="language-plaintext highlighter-rouge">pintos</code> 命令）与引导加载程序通信。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#### Command-line arguments and their count.
+#### This is written by the `pintos' utility and read by the kernel.
+#### The loader itself does not do anything with the command line.
+	.org LOADER_ARG_CNT - LOADER_BASE
+	.fill LOADER_ARG_CNT_LEN, 1, 0
+
+	.org LOADER_ARGS - LOADER_BASE
+	.fill LOADER_ARGS_LEN, 1, 0
+
+#### Partition table.
+	.org LOADER_PARTS - LOADER_BASE
+	.fill LOADER_PARTS_LEN, 1, 0
+
+#### Boot-sector signature for BIOS inspection.
+	.org LOADER_SIG - LOADER_BASE
+	.word 0xaa55
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="前置知识">前置知识</h2>
+
+<h3 id="org-指令">.org 指令</h3>
+
+<p><code class="language-plaintext highlighter-rouge">.org</code> 是汇编器指令，用于设置<strong>位置计数器</strong>（location counter）。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>.org 100        # 从偏移 100 开始放置后续代码/数据
+</code></pre></div></div>
+
+<p>如果当前位置小于指定值，汇编器会填充字节（默认是 0）。</p>
+
+<h3 id="fill-指令">.fill 指令</h3>
+
+<p><code class="language-plaintext highlighter-rouge">.fill</code> 用于填充指定数量的字节。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>.fill count, size, value
+# count: 重复次数
+# size: 每次填充的字节数
+# value: 填充的值
+</code></pre></div></div>
+
+<p>例如：</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>.fill 10, 1, 0    # 填充 10 个字节，每个都是 0
+.fill 5, 2, 0xFF  # 填充 5 个双字节，每个都是 0x00FF
+</code></pre></div></div>
+
+<h3 id="loaderh-中的常量">loader.h 中的常量</h3>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#define LOADER_BASE 0x7c00      // 加载器基地址
+#define LOADER_END  0x7e00      // 加载器结束地址 (0x7c00 + 512)
+</span>
+<span class="cp">#define LOADER_SIG_LEN 2        // 签名长度
+#define LOADER_PARTS_LEN 64     // 分区表长度
+#define LOADER_ARGS_LEN 128     // 命令行参数长度
+#define LOADER_ARG_CNT_LEN 4    // 参数计数长度
+</span>
+<span class="c1">// 计算各部分地址</span>
+<span class="cp">#define LOADER_SIG (LOADER_END - LOADER_SIG_LEN)           // 0x7dfe
+#define LOADER_PARTS (LOADER_SIG - LOADER_PARTS_LEN)       // 0x7dbe
+#define LOADER_ARGS (LOADER_PARTS - LOADER_ARGS_LEN)       // 0x7d3e
+#define LOADER_ARG_CNT (LOADER_ARGS - LOADER_ARG_CNT_LEN)  // 0x7d3a
+</span></code></pre></div></div>
+
+<hr />
+
+<h2 id="引导扇区布局">引导扇区布局</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>偏移      地址        大小    内容
+──────────────────────────────────────────────────────
+0x000    0x7c00      314    引导代码
+                            (实际大小可能不同)
+...      ...         ...    (未使用空间)
+0x1ba    0x7d3a      4      命令行参数数量
+0x1be    0x7d3e      128    命令行参数字符串
+0x23e    0x7dbe      64     分区表 (4 × 16 字节)
+0x27e    0x7dfe      2      引导签名 (0xAA55)
+──────────────────────────────────────────────────────
+                     512    总计
+</code></pre></div></div>
+
+<p><strong>图形表示：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    0x7c00                                           0x7e00
+    ┌────────────────────────────────────────────────┐
+    │                                                │
+    │              引导代码                           │
+    │           (约 314 字节)                         │
+    │                                                │
+    ├────────────────────────────────────────────────┤ 0x7d3a
+    │         命令行参数数量 (4 字节)                 │
+    ├────────────────────────────────────────────────┤ 0x7d3e
+    │                                                │
+    │          命令行参数 (128 字节)                  │
+    │                                                │
+    ├────────────────────────────────────────────────┤ 0x7dbe
+    │  分区表项 1 (16 字节)                          │
+    ├────────────────────────────────────────────────┤
+    │  分区表项 2 (16 字节)                          │
+    ├────────────────────────────────────────────────┤
+    │  分区表项 3 (16 字节)                          │
+    ├────────────────────────────────────────────────┤
+    │  分区表项 4 (16 字节)                          │
+    ├────────────────────────────────────────────────┤ 0x7dfe
+    │    引导签名 0xAA55 (2 字节)                    │
+    └────────────────────────────────────────────────┘ 0x7e00
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="逐部分详解">逐部分详解</h2>
+
+<h3 id="第一部分命令行参数数量">第一部分：命令行参数数量</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	.org LOADER_ARG_CNT - LOADER_BASE
+	.fill LOADER_ARG_CNT_LEN, 1, 0
+</code></pre></div></div>
+
+<p><strong>计算：</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">LOADER_ARG_CNT</code> = 0x7d3a</li>
+  <li><code class="language-plaintext highlighter-rouge">LOADER_BASE</code> = 0x7c00</li>
+  <li>偏移 = 0x7d3a - 0x7c00 = 0x13a = 314</li>
+</ul>
+
+<p><strong>作用：</strong></p>
+<ul>
+  <li>存储命令行参数的数量（32 位整数）</li>
+  <li>由 <code class="language-plaintext highlighter-rouge">pintos</code> 工具写入</li>
+  <li>内核在启动时读取</li>
+</ul>
+
+<p><strong>示例：</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>如果命令行是: pintos -- run alarm-multiple
+参数数量 = 3 ("run", "alarm-multiple", 可能还有其他)
+</code></pre></div></div>
+
+<hr />
+
+<h3 id="第二部分命令行参数字符串">第二部分：命令行参数字符串</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	.org LOADER_ARGS - LOADER_BASE
+	.fill LOADER_ARGS_LEN, 1, 0
+</code></pre></div></div>
+
+<p><strong>计算：</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">LOADER_ARGS</code> = 0x7d3e</li>
+  <li>偏移 = 0x7d3e - 0x7c00 = 0x13e = 318</li>
+</ul>
+
+<p><strong>作用：</strong></p>
+<ul>
+  <li>存储命令行参数字符串（最多 128 字节）</li>
+  <li>格式：null 分隔的字符串序列</li>
+</ul>
+
+<p><strong>示例：</strong></p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>"run\0alarm-multiple\0-q\0"
+
+内存布局:
+0x7d3e: 'r' 'u' 'n' '\0' 'a' 'l' 'a' 'r' 'm' '-' ...
+</code></pre></div></div>
+
+<p><strong>限制：</strong></p>
+<ul>
+  <li>最大 128 字节</li>
+  <li>超出部分会被截断</li>
+</ul>
+
+<hr />
+
+<h3 id="第三部分分区表">第三部分：分区表</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	.org LOADER_PARTS - LOADER_BASE
+	.fill LOADER_PARTS_LEN, 1, 0
+</code></pre></div></div>
+
+<p><strong>计算：</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">LOADER_PARTS</code> = 0x7dbe</li>
+  <li>偏移 = 0x7dbe - 0x7c00 = 0x1be = 446</li>
+</ul>
+
+<p><strong>这是标准 MBR 分区表的位置！</strong></p>
+
+<p><strong>分区表结构：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>偏移</th>
+      <th>大小</th>
+      <th>内容</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>446</td>
+      <td>16</td>
+      <td>分区表项 1</td>
+    </tr>
+    <tr>
+      <td>462</td>
+      <td>16</td>
+      <td>分区表项 2</td>
+    </tr>
+    <tr>
+      <td>478</td>
+      <td>16</td>
+      <td>分区表项 3</td>
+    </tr>
+    <tr>
+      <td>494</td>
+      <td>16</td>
+      <td>分区表项 4</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>每个分区表项：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>偏移</th>
+      <th>大小</th>
+      <th>内容</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0</td>
+      <td>1</td>
+      <td>启动标志</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>3</td>
+      <td>CHS 起始</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>1</td>
+      <td>分区类型</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>3</td>
+      <td>CHS 结束</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td>4</td>
+      <td>LBA 起始</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td>4</td>
+      <td>扇区总数</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>为什么用 .fill 而不是真实数据？</strong></p>
+
+<ul>
+  <li>分区表由磁盘工具（如 <code class="language-plaintext highlighter-rouge">fdisk</code>）写入</li>
+  <li>引导加载程序只需要预留空间</li>
+  <li><code class="language-plaintext highlighter-rouge">.fill 64, 1, 0</code> 初始化为全零（无分区）</li>
+</ul>
+
+<hr />
+
+<h3 id="第四部分引导签名">第四部分：引导签名</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	.org LOADER_SIG - LOADER_BASE
+	.word 0xaa55
+</code></pre></div></div>
+
+<p><strong>计算：</strong></p>
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">LOADER_SIG</code> = 0x7dfe</li>
+  <li>偏移 = 0x7dfe - 0x7c00 = 0x1fe = 510</li>
+</ul>
+
+<p><strong>这是最关键的！</strong></p>
+
+<p><strong>0xAA55 签名的意义：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>位置 510: 0x55
+位置 511: 0xAA
+
+作为 16 位字（小端序）读取: 0xAA55
+</code></pre></div></div>
+
+<p>BIOS 在加载引导扇区后检查这个签名：</p>
+<ul>
+  <li>如果是 0xAA55：有效的引导扇区，跳转执行</li>
+  <li>如果不是：无效，尝试其他启动设备</li>
+</ul>
+
+<p><strong>历史背景：</strong></p>
+
+<p>这个签名从 IBM PC 时代就开始使用（1981年），沿用至今。</p>
+
+<hr />
+
+<h2 id="工作流程">工作流程</h2>
+
+<h3 id="磁盘镜像创建">磁盘镜像创建</h3>
+
+<pre><code class="language-mermaid">flowchart LR
+    A["编译 loader.S"] --&gt; B["loader.o"]
+    B --&gt; C["loader.bin&lt;br/&gt;(512 字节)"]
+    C --&gt; D["创建磁盘镜像"]
+    D --&gt; E["pintos 工具&lt;br/&gt;写入命令行参数"]
+    E --&gt; F["磁盘工具&lt;br/&gt;写入分区表"]
+</code></pre>
+
+<h3 id="引导过程">引导过程</h3>
+
+<pre><code class="language-mermaid">flowchart TD
+    A["BIOS 加载扇区 0&lt;br/&gt;到 0x7c00"] --&gt; B["BIOS 检查 0x7dfe&lt;br/&gt;处的签名"]
+    B --&gt; C{签名是 0xAA55?}
+    C --&gt;|是| D["跳转到 0x7c00"]
+    C --&gt;|否| E["尝试其他启动设备"]
+    D --&gt; F["引导代码读取&lt;br/&gt;分区表 (0x7dbe)"]
+    F --&gt; G["找到 Pintos 分区"]
+    G --&gt; H["加载内核"]
+    H --&gt; I["内核读取命令行参数&lt;br/&gt;(0x7d3a, 0x7d3e)"]
+</code></pre>
+
+<hr />
+
+<h2 id="pintos-工具如何写入参数">pintos 工具如何写入参数</h2>
+
+<p><code class="language-plaintext highlighter-rouge">pintos</code> 是一个 Perl 脚本，用于启动 Pintos。它会：</p>
+
+<ol>
+  <li>打开磁盘镜像文件</li>
+  <li>定位到偏移 0x1ba (LOADER_ARG_CNT - 0x7c00)</li>
+  <li>写入参数数量（4 字节）</li>
+  <li>定位到偏移 0x1be (LOADER_ARGS - 0x7c00)</li>
+  <li>写入参数字符串（最多 128 字节）</li>
+</ol>
+
+<p><strong>伪代码：</strong></p>
+
+<div class="language-perl highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># 打开磁盘镜像</span>
+<span class="nb">open</span><span class="p">(</span><span class="nv">DISK</span><span class="p">,</span> <span class="p">"</span><span class="s2">+&lt;</span><span class="p">",</span> <span class="nv">$disk_image</span><span class="p">);</span>
+
+<span class="c1"># 写入参数数量</span>
+<span class="nb">seek</span><span class="p">(</span><span class="nv">DISK</span><span class="p">,</span> <span class="mh">0x1ba</span><span class="p">,</span> <span class="nv">SEEK_SET</span><span class="p">);</span>
+<span class="k">print</span> <span class="nv">DISK</span> <span class="nb">pack</span><span class="p">("</span><span class="s2">V</span><span class="p">",</span> <span class="nv">$arg_count</span><span class="p">);</span>  <span class="c1"># V = 32位小端</span>
+
+<span class="c1"># 写入参数字符串</span>
+<span class="nb">seek</span><span class="p">(</span><span class="nv">DISK</span><span class="p">,</span> <span class="mh">0x1be</span><span class="p">,</span> <span class="nv">SEEK_SET</span><span class="p">);</span>
+<span class="k">print</span> <span class="nv">DISK</span> <span class="nb">join</span><span class="p">("</span><span class="se">\</span><span class="s2">0</span><span class="p">",</span> <span class="nv">@args</span><span class="p">);</span>
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="内核如何读取参数">内核如何读取参数</h2>
+
+<p>在 <code class="language-plaintext highlighter-rouge">threads/init.c</code> 中：</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// 参数数量</span>
+<span class="k">extern</span> <span class="kt">uint32_t</span> <span class="n">init_ram_pages</span><span class="p">;</span>  <span class="c1">// 不是这个，只是示例</span>
+
+<span class="c1">// 实际上，内核通过固定地址读取：</span>
+<span class="c1">// 参数数量在 0x7d3a</span>
+<span class="c1">// 参数字符串在 0x7d3e</span>
+</code></pre></div></div>
+
+<p>内核可以通过这些参数来：</p>
+<ul>
+  <li>决定运行哪个测试</li>
+  <li>设置调试选项</li>
+  <li>配置系统参数</li>
+</ul>
+
+<hr />
+
+<h2 id="空间计算">空间计算</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>总空间: 512 字节
+
+引导签名:     2 字节
+分区表:       64 字节
+命令行参数:   128 字节
+参数数量:     4 字节
+──────────────────────
+数据区总计:   198 字节
+
+可用于代码:   512 - 198 = 314 字节
+</code></pre></div></div>
+
+<p>这就是为什么引导加载程序的代码必须非常紧凑！</p>
+
+<hr />
+
+<h2 id="验证布局">验证布局</h2>
+
+<p>可以用 <code class="language-plaintext highlighter-rouge">hexdump</code> 或 <code class="language-plaintext highlighter-rouge">xxd</code> 验证：</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 查看引导签名</span>
+xxd <span class="nt">-s</span> 510 <span class="nt">-l</span> 2 pintos.dsk
+<span class="c"># 应该显示: 55 aa</span>
+
+<span class="c"># 查看分区表</span>
+xxd <span class="nt">-s</span> 446 <span class="nt">-l</span> 64 pintos.dsk
+
+<span class="c"># 查看命令行参数</span>
+xxd <span class="nt">-s</span> 314 <span class="nt">-l</span> 4 pintos.dsk   <span class="c"># 参数数量</span>
+xxd <span class="nt">-s</span> 318 <span class="nt">-l</span> 128 pintos.dsk <span class="c"># 参数字符串</span>
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-如果代码超过-314-字节会怎样">Q1: 如果代码超过 314 字节会怎样？</h3>
+
+<p>汇编器会报错，因为 <code class="language-plaintext highlighter-rouge">.org</code> 会尝试回退位置计数器（这是不允许的）。</p>
+
+<h3 id="q2-为什么命令行参数在引导代码和分区表之间">Q2: 为什么命令行参数在引导代码和分区表之间？</h3>
+
+<p>这是 Pintos 特有的设计。传统 MBR 不包含命令行参数。Pintos 在保持 MBR 兼容性的同时，利用未使用的空间传递参数。</p>
+
+<h3 id="q3-引导加载程序为什么不使用这些参数">Q3: 引导加载程序为什么不使用这些参数？</h3>
+
+<p>引导加载程序的任务很简单：加载内核。命令行参数是给内核用的，告诉它该做什么。</p>
+
+<h3 id="q4-如果没有分区表会怎样">Q4: 如果没有分区表会怎样？</h3>
+
+<p>代码会打印 “Not found” 并调用 INT 18h。分区表全零等于没有有效分区。</p>
+
+<h3 id="q5-0xaa55-有什么特殊含义">Q5: 0xAA55 有什么特殊含义？</h3>
+
+<p>没有深层含义，只是 IBM 在 1981 年选择的一个容易识别的模式：</p>
+<ul>
+  <li>55 = 01010101</li>
+  <li>AA = 10101010
+这种交替的位模式容易检测硬件错误。</li>
+</ul>
+
+<hr />
+
+<h2 id="扩展思考为什么是-512-字节">扩展思考：为什么是 512 字节？</h2>
+
+<p><strong>历史原因：</strong></p>
+
+<ol>
+  <li>早期软盘使用 512 字节扇区</li>
+  <li>这成为事实标准</li>
+  <li>硬盘沿用了这个大小</li>
+  <li>BIOS 被设计为加载一个扇区</li>
+</ol>
+
+<p><strong>现代发展：</strong></p>
+
+<ul>
+  <li>高级格式（AF）硬盘使用 4096 字节物理扇区</li>
+  <li>但逻辑上仍模拟 512 字节扇区</li>
+  <li>UEFI 可以加载更大的引导程序</li>
+</ul>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果要将命令行参数扩展到 256 字节，需要修改哪些地方？</p>
+  </li>
+  <li>
+    <p>为什么分区表正好在偏移 446 处？（提示：MBR 规范）</p>
+  </li>
+  <li>
+    <p>如果把引导签名改成其他值（如 0x1234），会发生什么？</p>
+  </li>
+  <li>
+    <p>能否在不修改 loader.S 的情况下，通过磁盘编辑器改变命令行参数？</p>
+  </li>
+  <li>
+    <p>如果引导代码需要更多空间，有什么解决方案？（提示：两阶段引导）</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="总结loaders-完整布局">总结：loader.S 完整布局</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>地址范围          大小      内容
+─────────────────────────────────────────────────
+0x7c00-0x7d39    314       引导代码
+                           - 初始化
+                           - 串口配置
+                           - 扫描分区
+                           - 加载内核
+                           - 跳转
+                           - 辅助函数 (puts, putc, read_sector)
+─────────────────────────────────────────────────
+0x7d3a-0x7d3d    4         命令行参数数量
+─────────────────────────────────────────────────
+0x7d3e-0x7dbd    128       命令行参数字符串
+─────────────────────────────────────────────────
+0x7dbe-0x7dfd    64        分区表 (4 × 16 字节)
+─────────────────────────────────────────────────
+0x7dfe-0x7dff    2         引导签名 (0xAA55)
+─────────────────────────────────────────────────
+                 512       总计
+</code></pre></div></div>
+
+<hr />
+
+<p>这是 loader.S 分析系列的最后一部分。希望这些文档能帮助你理解 Pintos 引导加载程序的工作原理！</p>
+
+<h2 id="系列文档索引">系列文档索引</h2>
+
+<ol>
+  <li>初始化 - 段寄存器和栈的设置</li>
+  <li>串口配置 - 配置串口用于调试输出</li>
+  <li>扫描硬盘分区 - 寻找 Pintos 内核分区</li>
+  <li>加载内核 - 将内核从磁盘读取到内存</li>
+  <li>跳转到内核 - 从 ELF 头读取入口地址并跳转</li>
+  <li>错误处理 - 处理各种启动失败情况</li>
+  <li>puts 函数 - 巧妙的字符串打印实现</li>
+  <li>putc 函数 - 字符输出和自修改代码</li>
+  <li>read_sector 函数 - 使用 BIOS 扩展读取磁盘</li>
+  <li>数据结构 - 引导扇区末尾的数据定义（本文档）</li>
+</ol>

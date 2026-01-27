@@ -1,0 +1,424 @@
+<h2 id="概述">概述</h2>
+
+<p>这是 Pintos 引导加载程序的第一部分，负责在 CPU 启动后建立最基本的运行环境。这部分代码非常短，但每一行都至关重要。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># Runs in real mode, which is a 16-bit segment.
+	.code16
+
+# Set up segment registers.
+# Set stack to grow downward from 60 kB (after boot, the kernel
+# continues to use this stack for its initial thread).
+
+	sub %ax, %ax
+	mov %ax, %ds
+	mov %ax, %ss
+	mov $0xf000, %esp
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="前置知识">前置知识</h2>
+
+<h3 id="计算机启动过程">计算机启动过程</h3>
+
+<p>当你按下电源按钮时，会发生以下事情：</p>
+
+<pre><code class="language-mermaid">flowchart LR
+    A["CPU 上电复位"] --&gt; B["BIOS 启动"]
+    B --&gt; C["BIOS 自检"]
+    C --&gt; D["加载引导扇区&lt;br/&gt;到 0x7C00"]
+    D --&gt; E["跳转执行&lt;br/&gt;Loader 代码"]
+</code></pre>
+
+<ol>
+  <li><strong>CPU 上电复位</strong>：CPU 被初始化到一个已知状态</li>
+  <li><strong>BIOS 启动</strong>：CPU 从固定地址（通常是 0xFFFF0）开始执行 BIOS 代码</li>
+  <li><strong>BIOS 自检</strong>：检测内存、硬盘等硬件</li>
+  <li><strong>加载引导扇区</strong>：BIOS 将硬盘第一个扇区（512 字节）加载到内存地址 <code class="language-plaintext highlighter-rouge">0x7C00</code></li>
+  <li><strong>跳转执行</strong>：BIOS 跳转到 <code class="language-plaintext highlighter-rouge">0x7C00</code>，开始执行我们的 loader 代码</li>
+</ol>
+
+<h3 id="什么是实模式real-mode">什么是实模式（Real Mode）？</h3>
+
+<p>x86 处理器有多种运行模式：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>模式</th>
+      <th>位宽</th>
+      <th>最大内存</th>
+      <th>特点</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>实模式</td>
+      <td>16位</td>
+      <td>1MB</td>
+      <td>CPU 启动时的默认模式</td>
+    </tr>
+    <tr>
+      <td>保护模式</td>
+      <td>32位</td>
+      <td>4GB</td>
+      <td>现代操作系统使用</td>
+    </tr>
+    <tr>
+      <td>长模式</td>
+      <td>64位</td>
+      <td>16EB</td>
+      <td>64位操作系统使用</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>CPU 启动时总是处于 16 位实模式</strong>，这是为了向后兼容最早的 8086 处理器（1978年）。</p>
+
+<h3 id="实模式的内存寻址">实模式的内存寻址</h3>
+
+<p>在实模式下，地址由两部分组成：<strong>段地址</strong> 和 <strong>偏移地址</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>物理地址 = 段地址 × 16 + 偏移地址
+</code></pre></div></div>
+
+<p>例如：</p>
+<ul>
+  <li>段地址 = 0x0000，偏移 = 0x7C00</li>
+  <li>物理地址 = 0x0000 × 16 + 0x7C00 = 0x7C00</li>
+</ul>
+
+<p>这种设计允许 16 位寄存器访问 20 位地址空间（最大 1MB）。</p>
+
+<h3 id="段寄存器">段寄存器</h3>
+
+<p>x86 有 4 个主要的段寄存器：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>寄存器</th>
+      <th>名称</th>
+      <th>用途</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>CS</td>
+      <td>Code Segment</td>
+      <td>代码段，指令从这里取</td>
+    </tr>
+    <tr>
+      <td>DS</td>
+      <td>Data Segment</td>
+      <td>数据段，默认数据访问使用</td>
+    </tr>
+    <tr>
+      <td>SS</td>
+      <td>Stack Segment</td>
+      <td>栈段，push/pop 使用</td>
+    </tr>
+    <tr>
+      <td>ES</td>
+      <td>Extra Segment</td>
+      <td>附加段，字符串操作等使用</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="逐行详解">逐行详解</h2>
+
+<h3 id="第-1-行code16">第 1 行：<code class="language-plaintext highlighter-rouge">.code16</code></h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>.code16
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>这是一个<strong>汇编器指令（Assembler Directive）</strong>，不是 CPU 指令。它告诉汇编器（如 GAS）：</p>
+
+<blockquote>
+  <p>“接下来的代码应该生成 16 位的机器码”</p>
+</blockquote>
+
+<p><strong>为什么需要？</strong></p>
+
+<p>因为 CPU 启动时处于 16 位模式，我们必须使用 16 位指令。如果汇编器默认生成 32 位代码，CPU 会错误地解释这些指令。</p>
+
+<p><strong>对比示例：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>指令</th>
+      <th>16位机器码</th>
+      <th>32位机器码</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">mov $0, %ax</code></td>
+      <td>B8 00 00</td>
+      <td>66 B8 00 00 00 00</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>可以看到，同一条指令在不同模式下编码完全不同。</p>
+
+<hr />
+
+<h3 id="第-2-行sub-ax-ax">第 2 行：<code class="language-plaintext highlighter-rouge">sub %ax, %ax</code></h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sub %ax, %ax
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>这条指令将 AX 寄存器的值减去自身，结果存回 AX。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>AX = AX - AX = 0
+</code></pre></div></div>
+
+<p><strong>为什么不直接用 <code class="language-plaintext highlighter-rouge">mov $0, %ax</code>？</strong></p>
+
+<p>让我们比较两种方式：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>指令</th>
+      <th>机器码</th>
+      <th>字节数</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">sub %ax, %ax</code></td>
+      <td>29 C0</td>
+      <td>2 字节</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">mov $0, %ax</code></td>
+      <td>B8 00 00</td>
+      <td>3 字节</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><code class="language-plaintext highlighter-rouge">sub %ax, %ax</code> 节省了 1 个字节！</p>
+
+<p>在引导扇区中，我们只有 <strong>512 字节</strong>的空间，其中还包括数据结构。每一个字节都很宝贵，所以程序员使用这种技巧来节省空间。</p>
+
+<p><strong>其他等效的清零技巧：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sub %ax, %ax    # 2 字节，常用
+xor %ax, %ax    # 2 字节，同样常用
+and $0, %ax     # 3 字节，较少用
+mov $0, %ax     # 3 字节，最直观
+</code></pre></div></div>
+
+<hr />
+
+<h3 id="第-3-4-行设置段寄存器">第 3-4 行：设置段寄存器</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mov %ax, %ds
+mov %ax, %ss
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>将 AX 的值（现在是 0）复制到 DS 和 SS 寄存器。</p>
+
+<p><strong>为什么需要？</strong></p>
+
+<p>BIOS 跳转到我们的代码时，<strong>段寄存器的值是不确定的</strong>。不同的 BIOS 可能设置不同的值。为了确保代码正确运行，我们必须自己初始化它们。</p>
+
+<p><strong>为什么设置为 0？</strong></p>
+
+<p>设置 DS = SS = 0 意味着：</p>
+
+<ul>
+  <li>数据访问的物理地址 = 0 × 16 + 偏移 = 偏移</li>
+  <li>栈操作的物理地址 = 0 × 16 + 偏移 = 偏移</li>
+</ul>
+
+<p>这样，偏移地址就等于物理地址，简化了地址计算。</p>
+
+<p><strong>为什么不设置 CS？</strong></p>
+
+<p>CS（代码段）不能直接用 <code class="language-plaintext highlighter-rouge">mov</code> 指令修改。它只能通过跳转指令（如 <code class="language-plaintext highlighter-rouge">jmp</code>、<code class="language-plaintext highlighter-rouge">call</code>、<code class="language-plaintext highlighter-rouge">ret</code>）间接改变。</p>
+
+<p>BIOS 跳转到 0x7C00 时，通常设置 CS:IP = 0x0000:0x7C00，所以 CS 已经是 0。</p>
+
+<p><strong>为什么不设置 ES？</strong></p>
+
+<p>ES 会在后面使用前设置。这里先不管它。</p>
+
+<hr />
+
+<h3 id="第-5-行设置栈指针">第 5 行：设置栈指针</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mov $0xf000, %esp
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>将栈指针 ESP 设置为 0xF000（十进制 61440，约 60KB）。</p>
+
+<p><strong>栈是什么？</strong></p>
+
+<p>栈是一块用于临时存储的内存区域，遵循”后进先出”（LIFO）原则：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>         高地址
+    ┌─────────────┐
+    │             │
+    │  （空闲）    │
+    │             │
+    ├─────────────┤ ← ESP 指向这里（栈顶）
+    │   数据 3    │
+    ├─────────────┤
+    │   数据 2    │
+    ├─────────────┤
+    │   数据 1    │
+    └─────────────┘
+         低地址
+</code></pre></div></div>
+
+<p><strong>栈的用途：</strong></p>
+
+<ol>
+  <li>保存函数返回地址</li>
+  <li>传递函数参数</li>
+  <li>存储局部变量</li>
+  <li>临时保存寄存器值</li>
+</ol>
+
+<p><strong>为什么选择 0xF000？</strong></p>
+
+<p>让我们看看内存布局：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>地址              内容
+─────────────────────────────────
+0x00000-0x003FF  中断向量表（BIOS 使用）
+0x00400-0x004FF  BIOS 数据区
+0x00500-0x07BFF  可用内存
+0x07C00-0x07DFF  我们的 Loader（512 字节）
+0x07E00-0x0FFFF  可用内存（约 33KB）
+0x10000-...      后面会用来加载内核
+</code></pre></div></div>
+
+<p>0xF000 位于可用区域内，向下增长时不会覆盖 Loader 代码或 BIOS 数据。</p>
+
+<p><strong>为什么是 ESP 而不是 SP？</strong></p>
+
+<p>ESP 是 32 位寄存器，SP 是其低 16 位。在实模式下，只有低 16 位有效（0xF000），但使用 ESP 可以确保高位清零，避免潜在问题。</p>
+
+<p><strong>栈向下增长是什么意思？</strong></p>
+
+<p>当你执行 <code class="language-plaintext highlighter-rouge">push</code> 时：</p>
+<ol>
+  <li>ESP 先减小（例如从 0xF000 变成 0xEFFE）</li>
+  <li>然后数据写入新地址</li>
+</ol>
+
+<p>当你执行 <code class="language-plaintext highlighter-rouge">pop</code> 时：</p>
+<ol>
+  <li>先读取 ESP 指向的数据</li>
+  <li>ESP 再增大</li>
+</ol>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>PUSH 操作：           POP 操作：
+ESP ↓ 减小           ESP ↑ 增大
+
+   栈向低地址增长
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="内存状态图">内存状态图</h2>
+
+<p>初始化完成后，内存状态如下：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>          物理地址
+    ┌─────────────────┐ 0x100000 (1MB)
+    │                 │
+    │   BIOS ROM 等   │
+    │                 │
+    ├─────────────────┤ 0xA0000 (640KB)
+    │                 │
+    │    可用内存      │
+    │   (用于内核)     │
+    │                 │
+    ├─────────────────┤ 0x10000 (64KB)
+    │                 │
+    │   栈空间 ↓       │ ← SS = 0
+    │                 │
+    ├─────────────────┤ 0x0F000 (60KB) ← ESP
+    │                 │
+    │   可用内存       │
+    │                 │
+    ├─────────────────┤ 0x07E00
+    │   Loader 代码   │
+    ├─────────────────┤ 0x07C00 ← DS = 0, 代码从这里开始
+    │   可用内存       │
+    ├─────────────────┤ 0x00500
+    │   BIOS 数据区   │
+    ├─────────────────┤ 0x00400
+    │   中断向量表     │
+    └─────────────────┘ 0x00000
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-为什么-bios-选择-0x7c00-这个地址">Q1: 为什么 BIOS 选择 0x7C00 这个地址？</h3>
+
+<p>这是历史原因。IBM PC 的最初设计者选择了这个地址：</p>
+
+<ul>
+  <li>0x7C00 = 0x7FFF - 512 + 1 = 32KB - 512 + 1</li>
+  <li>当时 IBM PC 最小内存是 32KB</li>
+  <li>引导扇区放在 32KB 末尾，为操作系统预留前面的空间</li>
+</ul>
+
+<h3 id="q2-初始化时-ax-的值是什么">Q2: 初始化时 AX 的值是什么？</h3>
+
+<p>不确定！BIOS 可能在 AX 中放了任何值。这就是为什么我们要用 <code class="language-plaintext highlighter-rouge">sub %ax, %ax</code> 显式清零。</p>
+
+<h3 id="q3-如果不初始化段寄存器会怎样">Q3: 如果不初始化段寄存器会怎样？</h3>
+
+<p>程序可能在某些 BIOS 上正常工作，在其他 BIOS 上崩溃。这是一个很难调试的问题，因为它依赖于具体的硬件。</p>
+
+<h3 id="q4-栈空间会不会太小">Q4: 栈空间会不会太小？</h3>
+
+<p>0xF000 - 0x7E00 ≈ 29KB 的栈空间对于引导加载程序来说绰绰有余。我们只需要保存少量的返回地址和寄存器。</p>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果将 <code class="language-plaintext highlighter-rouge">sub %ax, %ax</code> 改为 <code class="language-plaintext highlighter-rouge">xor %ax, %ax</code>，效果相同吗？为什么？</p>
+  </li>
+  <li>
+    <p>如果我们把栈设置在 0x7000 会有什么问题？</p>
+  </li>
+  <li>
+    <p>为什么不能用 <code class="language-plaintext highlighter-rouge">mov $0, %cs</code> 来设置代码段寄存器？</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="下一部分">下一部分</h2>
+
+<p>初始化完成后，下一步是配置串口，用于调试输出。请参阅下一篇文章。</p>

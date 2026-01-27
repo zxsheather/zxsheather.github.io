@@ -1,0 +1,683 @@
+<h2 id="概述">概述</h2>
+
+<p><code class="language-plaintext highlighter-rouge">read_sector</code> 函数是引导加载程序的核心功能之一，负责从磁盘读取一个扇区（512 字节）到内存。它使用 BIOS 的扩展读取功能（Extended Read），支持 LBA 寻址，可以访问大于 8GB 的硬盘。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#### Sector read subroutine.  Takes a drive number in DL (0x80 = hard
+#### disk 0, 0x81 = hard disk 1, ...) and a sector number in EBX, and
+#### reads the specified sector into memory at ES:0000.  Returns with
+#### carry set on error, clear otherwise.  Preserves all
+#### general-purpose registers.
+
+read_sector:
+	pusha
+	sub %ax, %ax
+	push %ax			# LBA sector number [48:63]
+	push %ax			# LBA sector number [32:47]
+	push %ebx			# LBA sector number [0:31]
+	push %es			# Buffer segment
+	push %ax			# Buffer offset (always 0)
+	push $1				# Number of sectors to read
+	push $16			# Packet size
+	mov $0x42, %ah			# Extended read
+	mov %sp, %si			# DS:SI -&gt; packet
+	int $0x13			# Error code in CF
+	popa				# Pop 16 bytes, preserve flags
+popa_ret:
+	popa
+	ret				# Error code still in CF
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="前置知识">前置知识</h2>
+
+<h3 id="磁盘寻址方式">磁盘寻址方式</h3>
+
+<p>历史上有两种主要的磁盘寻址方式：</p>
+
+<h4 id="chscylinder-head-sector寻址">CHS（Cylinder-Head-Sector）寻址</h4>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>      柱面 (Cylinder)
+         │
+    ┌────┼────┐
+    │ ┌──┼──┐ │     磁头 (Head)
+    │ │  │  │ │     ↓
+    │ │  │  │ │   ┌───┐
+    │ │  ●──┼─┼───│ H0│  扇区 (Sector)
+    │ │  │  │ │   ├───┤
+    │ │  │  │ │   │ H1│
+    │ └──┼──┘ │   └───┘
+    └────┼────┘
+</code></pre></div></div>
+
+<ul>
+  <li><strong>柱面</strong>：同一半径的所有磁道</li>
+  <li><strong>磁头</strong>：选择哪个盘面</li>
+  <li><strong>扇区</strong>：磁道上的具体位置</li>
+</ul>
+
+<p><strong>CHS 的限制：</strong></p>
+<ul>
+  <li>柱面: 10 位 (0-1023)</li>
+  <li>磁头: 8 位 (0-255)</li>
+  <li>扇区: 6 位 (1-63)</li>
+  <li>最大: 1024 × 256 × 63 × 512 = <strong>8.4 GB</strong></li>
+</ul>
+
+<h4 id="lbalogical-block-addressing寻址">LBA（Logical Block Addressing）寻址</h4>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>扇区 0    扇区 1    扇区 2    ...    扇区 N
+┌────────┬────────┬────────┬─────┬────────┐
+│   0    │   1    │   2    │ ... │   N    │
+└────────┴────────┴────────┴─────┴────────┘
+</code></pre></div></div>
+
+<ul>
+  <li>扇区从 0 开始连续编号</li>
+  <li>简单直观</li>
+  <li>48 位 LBA 支持 <strong>128 PB</strong></li>
+</ul>
+
+<h3 id="bios-int-13h-扩展">BIOS INT 13h 扩展</h3>
+
+<p>为了支持 LBA 和大硬盘，BIOS 提供了扩展磁盘服务：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>AH 值</th>
+      <th>功能</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0x41</td>
+      <td>检查扩展是否支持</td>
+    </tr>
+    <tr>
+      <td>0x42</td>
+      <td><strong>扩展读取</strong>（我们使用这个）</td>
+    </tr>
+    <tr>
+      <td>0x43</td>
+      <td>扩展写入</td>
+    </tr>
+    <tr>
+      <td>0x44</td>
+      <td>验证扇区</td>
+    </tr>
+    <tr>
+      <td>0x48</td>
+      <td>获取驱动器参数</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="dapdisk-address-packet">DAP（Disk Address Packet）</h3>
+
+<p>扩展读取使用一个叫 DAP 的数据结构来指定参数：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>偏移  大小  内容
+────────────────────────────
+0     1    数据包大小（16 或 24）
+1     1    保留（必须为 0）
+2     2    要读取的扇区数
+4     2    缓冲区偏移
+6     2    缓冲区段
+8     8    起始 LBA 扇区号（64 位）
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="逐行详解">逐行详解</h2>
+
+<h3 id="第-1-行保存寄存器">第 1 行：保存寄存器</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>read_sector:
+	pusha
+</code></pre></div></div>
+
+<p>保存所有通用寄存器。函数承诺不修改调用者的寄存器。</p>
+
+<hr />
+
+<h3 id="第-2-8-行在栈上构建-dap">第 2-8 行：在栈上构建 DAP</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	sub %ax, %ax
+	push %ax			# LBA sector number [48:63]
+	push %ax			# LBA sector number [32:47]
+	push %ebx			# LBA sector number [0:31]
+	push %es			# Buffer segment
+	push %ax			# Buffer offset (always 0)
+	push $1				# Number of sectors to read
+	push $16			# Packet size
+</code></pre></div></div>
+
+<p>这段代码在栈上构建 DAP 结构。由于栈是向下增长的，我们按<strong>逆序</strong>压入字段。</p>
+
+<p><strong>逐条分析：</strong></p>
+
+<ol>
+  <li>
+    <p><strong><code class="language-plaintext highlighter-rouge">sub %ax, %ax</code></strong>：AX = 0，用于后续的零值</p>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">push %ax</code></strong> (两次)：
+    <ul>
+      <li>压入 LBA 的高 32 位（位 32-63）</li>
+      <li>这里总是 0，因为我们不访问超大硬盘</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">push %ebx</code></strong>：
+    <ul>
+      <li>EBX 包含要读取的扇区号（LBA 位 0-31）</li>
+      <li>注意这是 32 位压栈</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">push %es</code></strong>：
+    <ul>
+      <li>缓冲区的段地址</li>
+      <li>调用者已经设置好了</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">push %ax</code></strong>：
+    <ul>
+      <li>缓冲区偏移 = 0</li>
+      <li>总是从段的开始读取</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">push $1</code></strong>：
+    <ul>
+      <li>读取 1 个扇区</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">push $16</code></strong>：
+    <ul>
+      <li>DAP 大小 = 16 字节</li>
+    </ul>
+  </li>
+</ol>
+
+<p><strong>栈上的 DAP 结构：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>      高地址
+   ┌─────────────┐
+   │   pusha 的  │
+   │   寄存器    │
+   ├─────────────┤
+   │  LBA[48:63] │ = 0
+   ├─────────────┤
+   │  LBA[32:47] │ = 0
+   ├─────────────┤
+   │  LBA[0:31]  │ = EBX (扇区号)
+   ├─────────────┤
+   │   段地址    │ = ES
+   ├─────────────┤
+   │   偏移      │ = 0
+   ├─────────────┤
+   │   扇区数    │ = 1
+   ├─────────────┤
+   │   大小      │ = 16      ← SP 指向这里
+   └─────────────┘
+      低地址
+</code></pre></div></div>
+
+<hr />
+
+<h3 id="第-9-11-行调用-bios-扩展读取">第 9-11 行：调用 BIOS 扩展读取</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	mov $0x42, %ah			# Extended read
+	mov %sp, %si			# DS:SI -&gt; packet
+	int $0x13			# Error code in CF
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">mov $0x42, %ah</code></strong>：</p>
+<ul>
+  <li>选择扩展读取功能</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">mov %sp, %si</code></strong>：</p>
+<ul>
+  <li>让 SI 指向栈顶（DAP 的开始）</li>
+  <li>BIOS 通过 DS:SI 访问 DAP</li>
+  <li>由于 DS = 0，DS:SI = 0:SP = 栈上的 DAP</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">int $0x13</code></strong>：</p>
+<ul>
+  <li>调用 BIOS 磁盘服务</li>
+  <li>参数：
+    <ul>
+      <li>AH = 0x42（扩展读取）</li>
+      <li>DL = 驱动器号（调用者设置）</li>
+      <li>DS:SI = DAP 地址</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>返回值：</strong></p>
+<ul>
+  <li>CF = 0：成功</li>
+  <li>CF = 1：失败，AH = 错误码</li>
+</ul>
+
+<hr />
+
+<h3 id="第-12-行清理-dap">第 12 行：清理 DAP</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	popa				# Pop 16 bytes, preserve flags
+</code></pre></div></div>
+
+<p><strong>这是一个巧妙的技巧！</strong></p>
+
+<p><code class="language-plaintext highlighter-rouge">popa</code> 正常用于恢复寄存器，但这里用它来弹出 16 字节的 DAP：</p>
+<ul>
+  <li>DAP 大小 = 16 字节</li>
+  <li><code class="language-plaintext highlighter-rouge">popa</code> 弹出 16 字节</li>
+  <li>正好清理了 DAP</li>
+</ul>
+
+<p><strong>关键：<code class="language-plaintext highlighter-rouge">popa</code> 不影响标志寄存器</strong>，所以 CF（进位标志）保持 BIOS 设置的值。</p>
+
+<p><strong>寄存器会变吗？</strong></p>
+
+<p>会！<code class="language-plaintext highlighter-rouge">popa</code> 把 DAP 的数据当作寄存器值弹出。但没关系，因为：</p>
+<ol>
+  <li>下一条 <code class="language-plaintext highlighter-rouge">popa</code> 会恢复正确的寄存器值</li>
+  <li>这只是一个清理技巧</li>
+</ol>
+
+<hr />
+
+<h3 id="第-13-14-行恢复寄存器并返回">第 13-14 行：恢复寄存器并返回</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>popa_ret:
+	popa
+	ret				# Error code still in CF
+</code></pre></div></div>
+
+<p><strong><code class="language-plaintext highlighter-rouge">popa</code></strong>：</p>
+<ul>
+  <li>恢复最初 <code class="language-plaintext highlighter-rouge">pusha</code> 保存的寄存器</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">ret</code></strong>：</p>
+<ul>
+  <li>返回调用者</li>
+  <li>CF 仍然包含 BIOS 的返回状态</li>
+</ul>
+
+<p><strong><code class="language-plaintext highlighter-rouge">popa_ret</code> 标签</strong>：</p>
+<ul>
+  <li>这个标签被 <code class="language-plaintext highlighter-rouge">putc</code> 函数共享使用（见前一节）</li>
+</ul>
+
+<hr />
+
+<h2 id="内存和栈的变化">内存和栈的变化</h2>
+
+<h3 id="调用前">调用前</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>参数:
+- DL = 0x80 (硬盘 0)
+- EBX = 100 (扇区号)
+- ES = 0x2000 (目标段)
+
+栈:
+   [返回地址]  ← SP
+</code></pre></div></div>
+
+<h3 id="执行后">执行后</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>结果:
+- ES:0000 (即 0x20000) 包含扇区 100 的内容
+- CF = 0 (成功) 或 1 (失败)
+- 所有寄存器恢复原值
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="dap-字段详解">DAP 字段详解</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>字段</th>
+      <th>大小</th>
+      <th>Pintos 中的值</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>大小</td>
+      <td>1 字节</td>
+      <td>16</td>
+      <td>DAP 结构大小</td>
+    </tr>
+    <tr>
+      <td>保留</td>
+      <td>1 字节</td>
+      <td>0</td>
+      <td>必须为 0（和大小字段一起压入）</td>
+    </tr>
+    <tr>
+      <td>扇区数</td>
+      <td>2 字节</td>
+      <td>1</td>
+      <td>只读 1 个扇区</td>
+    </tr>
+    <tr>
+      <td>偏移</td>
+      <td>2 字节</td>
+      <td>0</td>
+      <td>缓冲区偏移</td>
+    </tr>
+    <tr>
+      <td>段</td>
+      <td>2 字节</td>
+      <td>ES</td>
+      <td>缓冲区段</td>
+    </tr>
+    <tr>
+      <td>LBA</td>
+      <td>8 字节</td>
+      <td>EBX</td>
+      <td>扇区号（只用低 32 位）</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="为什么-lba-是-64-位">为什么 LBA 是 64 位？</h3>
+
+<p>虽然 Pintos 只用 32 位（最大 2TB），但 BIOS 接口是 64 位的，所以高 32 位用 0 填充。</p>
+
+<hr />
+
+<h2 id="错误处理">错误处理</h2>
+
+<h3 id="常见错误码ah-中返回">常见错误码（AH 中返回）</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>错误码</th>
+      <th>含义</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0x00</td>
+      <td>成功</td>
+    </tr>
+    <tr>
+      <td>0x01</td>
+      <td>无效命令</td>
+    </tr>
+    <tr>
+      <td>0x02</td>
+      <td>地址标记未找到</td>
+    </tr>
+    <tr>
+      <td>0x04</td>
+      <td>扇区未找到</td>
+    </tr>
+    <tr>
+      <td>0x05</td>
+      <td>重置失败</td>
+    </tr>
+    <tr>
+      <td>0x07</td>
+      <td>驱动器参数活动失败</td>
+    </tr>
+    <tr>
+      <td>0x09</td>
+      <td>DMA 越界</td>
+    </tr>
+    <tr>
+      <td>0x0A</td>
+      <td>坏扇区标志</td>
+    </tr>
+    <tr>
+      <td>0x10</td>
+      <td>ECC 数据错误</td>
+    </tr>
+    <tr>
+      <td>0x20</td>
+      <td>控制器失败</td>
+    </tr>
+    <tr>
+      <td>0x40</td>
+      <td>寻道失败</td>
+    </tr>
+    <tr>
+      <td>0x80</td>
+      <td>超时</td>
+    </tr>
+    <tr>
+      <td>0xAA</td>
+      <td>驱动器未就绪</td>
+    </tr>
+    <tr>
+      <td>0xBB</td>
+      <td>未定义错误</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="调用者如何检查错误">调用者如何检查错误</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>call read_sector
+jc error_handler        # 如果 CF=1，跳转到错误处理
+# 成功，继续...
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="为什么在栈上构建-dap">为什么在栈上构建 DAP？</h2>
+
+<h3 id="替代方案-1静态分配">替代方案 1：静态分配</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># 静态 DAP
+.data
+dap:
+    .byte 16        # 大小
+    .byte 0         # 保留
+    .word 1         # 扇区数
+    .word 0         # 偏移
+    .word 0         # 段 (需要填充)
+    .long 0         # LBA (需要填充)
+    .long 0
+</code></pre></div></div>
+
+<p><strong>问题：</strong></p>
+<ul>
+  <li>浪费 16 字节宝贵的代码空间</li>
+  <li>需要额外代码填充可变字段</li>
+</ul>
+
+<h3 id="替代方案-2代码中嵌入">替代方案 2：代码中嵌入</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mov $dap, %si
+# ...填充 dap...
+int $0x13
+</code></pre></div></div>
+
+<p><strong>问题：</strong></p>
+<ul>
+  <li>仍然浪费空间</li>
+  <li>代码更复杂</li>
+</ul>
+
+<h3 id="pintos-方案">Pintos 方案</h3>
+
+<p>在栈上动态构建 DAP：</p>
+<ul>
+  <li>不占用额外代码空间</li>
+  <li>参数（ES, EBX）已经在寄存器中</li>
+  <li>用 <code class="language-plaintext highlighter-rouge">popa</code> 清理，不需要手动调整 SP</li>
+</ul>
+
+<hr />
+
+<h2 id="两个-popa-的解释">两个 popa 的解释</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>read_sector:
+    pusha                   # (1) 保存寄存器，16 字节
+    ...
+    push ...                # 构建 DAP，16 字节
+    push ...
+    int $0x13
+    popa                    # (2) 弹出 DAP，16 字节
+popa_ret:
+    popa                    # (3) 恢复寄存器，16 字节
+    ret
+</code></pre></div></div>
+
+<p>栈的变化：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>调用后:
+    [DAP 16字节]
+    [寄存器 16字节]
+    [返回地址]
+
+第一个 popa 后:
+    [寄存器 16字节]
+    [返回地址]
+
+第二个 popa 后:
+    [返回地址]   ← 正确状态！
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-为什么用扩展读取而不是传统-int-13h">Q1: 为什么用扩展读取而不是传统 INT 13h？</h3>
+
+<p>传统 INT 13h（AH=02h）使用 CHS 寻址，限制 8.4GB。扩展读取支持 LBA，可以访问任意大小的硬盘。</p>
+
+<h3 id="q2-如果-bios-不支持扩展读取怎么办">Q2: 如果 BIOS 不支持扩展读取怎么办？</h3>
+
+<p>非常老的 BIOS 可能不支持。但自从 1990 年代中期以来，几乎所有 BIOS 都支持。Pintos 假设支持。</p>
+
+<h3 id="q3-为什么每次只读一个扇区">Q3: 为什么每次只读一个扇区？</h3>
+
+<ul>
+  <li>简单</li>
+  <li>兼容性好</li>
+  <li>512 字节代码空间限制</li>
+  <li>对于 Pintos 来说足够快</li>
+</ul>
+
+<h3 id="q4-能否读取多个连续扇区">Q4: 能否读取多个连续扇区？</h3>
+
+<p>可以，只需修改 DAP 的扇区数字段。但需要：</p>
+<ul>
+  <li>确保缓冲区足够大</li>
+  <li>某些 BIOS 有单次传输限制</li>
+</ul>
+
+<h3 id="q5-popa-把-dap-弹到寄存器里不会出问题吗">Q5: popa 把 DAP 弹到寄存器里，不会出问题吗？</h3>
+
+<p>不会，因为紧接着的第二个 <code class="language-plaintext highlighter-rouge">popa</code> 会恢复正确的寄存器值。第一个 <code class="language-plaintext highlighter-rouge">popa</code> 只是一个清理 16 字节的技巧。</p>
+
+<hr />
+
+<h2 id="性能考虑">性能考虑</h2>
+
+<h3 id="每扇区一次-bios-调用">每扇区一次 BIOS 调用</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>读取 100 个扇区:
+- Pintos: 100 次 INT 13h
+- 优化版: 可能只需 1-2 次
+
+每次 INT 13h 调用开销:
+- 中断处理
+- 模式切换（如果在保护模式）
+- BIOS 初始化
+</code></pre></div></div>
+
+<p>对于引导加载程序，这种开销是可接受的。</p>
+
+<h3 id="传输速率">传输速率</h3>
+
+<p>受限于：</p>
+<ol>
+  <li>硬盘物理速度</li>
+  <li>BIOS 效率</li>
+  <li>PIO 模式（没有 DMA）</li>
+</ol>
+
+<p>典型速率：几 MB/s（足够引导）</p>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果要读取 2 个扇区，需要修改哪里？缓冲区需要多大？</p>
+  </li>
+  <li>
+    <p>为什么 <code class="language-plaintext highlighter-rouge">push $16</code> 后紧跟的字节被设为 0？（提示：DAP 结构）</p>
+  </li>
+  <li>
+    <p>如果 EBX 超过 32 位能表示的范围（约 2TB），会发生什么？</p>
+  </li>
+  <li>
+    <p>能否用 <code class="language-plaintext highlighter-rouge">add $16, %sp</code> 代替第一个 <code class="language-plaintext highlighter-rouge">popa</code> 来清理 DAP？有什么区别？</p>
+  </li>
+  <li>
+    <p>为什么 <code class="language-plaintext highlighter-rouge">popa_ret</code> 标签被两个函数共享？</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="代码复习">代码复习</h2>
+
+<p>完整的 <code class="language-plaintext highlighter-rouge">read_sector</code> 函数，带详细注释：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># 读取一个磁盘扇区到内存
+# 参数:
+#   DL = 驱动器号 (0x80 = 第一个硬盘)
+#   EBX = LBA 扇区号
+#   ES:0 = 目标缓冲区
+# 返回:
+#   CF = 0 成功, CF = 1 失败
+# 保留所有通用寄存器
+
+read_sector:
+    pusha                       # 保存所有寄存器
+
+    # 在栈上构建 DAP (Disk Address Packet)
+    sub %ax, %ax
+    push %ax                    # LBA [48:63] = 0
+    push %ax                    # LBA [32:47] = 0
+    push %ebx                   # LBA [0:31] = 扇区号
+    push %es                    # 缓冲区段
+    push %ax                    # 缓冲区偏移 = 0
+    push $1                     # 扇区数 = 1
+    push $16                    # 包大小 = 16 字节
+
+    mov $0x42, %ah              # 扩展读取
+    mov %sp, %si                # DS:SI -&gt; DAP
+    int $0x13                   # 调用 BIOS
+
+    popa                        # 弹出 DAP (16 字节)
+                                # 注意: 不影响 CF
+
+popa_ret:
+    popa                        # 恢复寄存器
+    ret                         # CF 包含结果
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="下一部分">下一部分</h2>
+
+<p>最后，我们来看 loader.S 末尾的数据结构定义。请参阅下一篇文章。</p>

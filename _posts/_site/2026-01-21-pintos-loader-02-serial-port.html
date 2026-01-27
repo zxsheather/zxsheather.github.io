@@ -1,0 +1,521 @@
+<h2 id="概述">概述</h2>
+
+<p>这部分代码配置计算机的串行端口（Serial Port），使得我们可以通过串口输出调试信息。这在没有显示器的环境下（如模拟器、服务器）非常有用。</p>
+
+<hr />
+
+<h2 id="原始代码">原始代码</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># Configure serial port so we can report progress without connected VGA.
+# See [IntrList] for details.
+	sub %dx, %dx			# Serial port 0.
+	mov $0xe3, %al			# 9600 bps, N-8-1.
+					# AH is already 0 (Initialize Port).
+	int $0x14			# Destroys AX.
+
+	call puts
+	.string "Pintos"
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="前置知识">前置知识</h2>
+
+<h3 id="什么是串口serial-port">什么是串口（Serial Port）？</h3>
+
+<p>串口是一种古老但非常可靠的通信接口。它按照<strong>串行</strong>方式传输数据——一次传输一个比特（bit）。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    计算机 A                    计算机 B
+   ┌────────┐                 ┌────────┐
+   │        │  TX ──────► RX  │        │
+   │  串口  │                 │  串口  │
+   │        │  RX ◄────── TX  │        │
+   └────────┘                 └────────┘
+           GND ◄───────► GND
+</code></pre></div></div>
+
+<ul>
+  <li><strong>TX (Transmit)</strong>：发送线</li>
+  <li><strong>RX (Receive)</strong>：接收线</li>
+  <li><strong>GND (Ground)</strong>：地线</li>
+</ul>
+
+<h3 id="为什么在引导时使用串口">为什么在引导时使用串口？</h3>
+
+<ol>
+  <li><strong>VGA 可能不可用</strong>：在模拟器或服务器环境中，可能没有显示器</li>
+  <li><strong>远程调试</strong>：可以通过串口连接到另一台电脑查看输出</li>
+  <li><strong>日志记录</strong>：串口输出可以被重定向到文件</li>
+  <li><strong>简单可靠</strong>：串口协议非常简单，不需要复杂的驱动</li>
+</ol>
+
+<h3 id="bios-串口服务int-14h">BIOS 串口服务（INT 14h）</h3>
+
+<p>BIOS 提供了串口操作的中断服务，通过 <code class="language-plaintext highlighter-rouge">int $0x14</code> 调用：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>AH 值</th>
+      <th>功能</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0x00</td>
+      <td>初始化串口</td>
+    </tr>
+    <tr>
+      <td>0x01</td>
+      <td>发送字符</td>
+    </tr>
+    <tr>
+      <td>0x02</td>
+      <td>接收字符</td>
+    </tr>
+    <tr>
+      <td>0x03</td>
+      <td>获取串口状态</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="逐行详解">逐行详解</h2>
+
+<h3 id="第-1-行选择串口">第 1 行：选择串口</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sub %dx, %dx			# Serial port 0.
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>将 DX 寄存器清零，选择串口 0（COM1）。</p>
+
+<p><strong>串口编号：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>DX 值</th>
+      <th>串口名称</th>
+      <th>I/O 地址</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0</td>
+      <td>COM1</td>
+      <td>0x3F8</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>COM2</td>
+      <td>0x2F8</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>COM3</td>
+      <td>0x3E8</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>COM4</td>
+      <td>0x2E8</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>为什么用 <code class="language-plaintext highlighter-rouge">sub %dx, %dx</code>？</strong></p>
+
+<p>和前面一样，这比 <code class="language-plaintext highlighter-rouge">mov $0, %dx</code> 节省 1 字节。</p>
+
+<hr />
+
+<h3 id="第-2-行设置串口参数">第 2 行：设置串口参数</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mov $0xe3, %al			# 9600 bps, N-8-1.
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>将 0xE3 放入 AL 寄存器，这是串口初始化的参数。</p>
+
+<p><strong>0xE3 的含义（二进制：11100011）：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  位 7-5: 波特率
+  ┌───┬───┬───┐
+  │ 1 │ 1 │ 1 │ = 111 = 9600 bps
+  └───┴───┴───┘
+  
+  位 4-3: 奇偶校验
+  ┌───┬───┐
+  │ 0 │ 0 │ = 00 = None（无校验）
+  └───┴───┘
+  
+  位 2: 停止位
+  ┌───┐
+  │ 0 │ = 1 个停止位
+  └───┘
+  
+  位 1-0: 数据位
+  ┌───┬───┐
+  │ 1 │ 1 │ = 11 = 8 位数据
+  └───┴───┘
+</code></pre></div></div>
+
+<p><strong>参数详解：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>参数</th>
+      <th>值</th>
+      <th>含义</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>波特率</td>
+      <td>9600 bps</td>
+      <td>每秒传输 9600 比特</td>
+    </tr>
+    <tr>
+      <td>奇偶校验</td>
+      <td>None</td>
+      <td>不进行校验</td>
+    </tr>
+    <tr>
+      <td>数据位</td>
+      <td>8 位</td>
+      <td>每个字符 8 比特</td>
+    </tr>
+    <tr>
+      <td>停止位</td>
+      <td>1 位</td>
+      <td>每帧结束用 1 个停止位</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>这种配置通常简写为 <strong>“9600 N-8-1”</strong> 或 <strong>“9600 8N1”</strong>。</p>
+
+<p><strong>串口通信帧格式：</strong></p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    ┌─────┬───────────────┬──────┬──────┐
+    │起始位│   8 位数据    │校验位│停止位│
+    │  0  │ D0 D1 ... D7  │ (无) │  1  │
+    └─────┴───────────────┴──────┴──────┘
+    
+    时间 →
+</code></pre></div></div>
+
+<p><strong>波特率选项表：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>位 7-5</th>
+      <th>波特率</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>000</td>
+      <td>110</td>
+    </tr>
+    <tr>
+      <td>001</td>
+      <td>150</td>
+    </tr>
+    <tr>
+      <td>010</td>
+      <td>300</td>
+    </tr>
+    <tr>
+      <td>011</td>
+      <td>600</td>
+    </tr>
+    <tr>
+      <td>100</td>
+      <td>1200</td>
+    </tr>
+    <tr>
+      <td>101</td>
+      <td>2400</td>
+    </tr>
+    <tr>
+      <td>110</td>
+      <td>4800</td>
+    </tr>
+    <tr>
+      <td>111</td>
+      <td>9600</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h3 id="第-3-行注释说明">第 3 行：注释说明</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>				# AH is already 0 (Initialize Port).
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>这是一条注释，解释为什么没有显式设置 AH。</p>
+
+<p><strong>为什么 AH 已经是 0？</strong></p>
+
+<p>回顾前面的代码：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sub %ax, %ax    # 这行将整个 AX（包括 AH 和 AL）清零
+</code></pre></div></div>
+
+<p>AX 寄存器由两部分组成：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    AX (16位)
+┌───────┬───────┐
+│  AH   │  AL   │
+│ 高8位 │ 低8位 │
+└───────┴───────┘
+</code></pre></div></div>
+
+<p>我们用 <code class="language-plaintext highlighter-rouge">sub %ax, %ax</code> 清零了整个 AX，所以 AH = 0。
+然后 <code class="language-plaintext highlighter-rouge">mov $0xe3, %al</code> 只修改了 AL，AH 仍然是 0。</p>
+
+<p><strong>AH = 0 的意义：</strong></p>
+
+<p>对于 INT 14h，AH = 0 表示”初始化串口”功能。</p>
+
+<hr />
+
+<h3 id="第-4-行调用-bios-中断">第 4 行：调用 BIOS 中断</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>int $0x14			# Destroys AX.
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>调用 BIOS 中断 0x14（串口服务）。</p>
+
+<p><strong><code class="language-plaintext highlighter-rouge">int</code> 指令的作用：</strong></p>
+
+<ol>
+  <li>将标志寄存器 FLAGS 压栈</li>
+  <li>将 CS（代码段）压栈</li>
+  <li>将 IP（指令指针）压栈</li>
+  <li>跳转到中断向量表中对应的处理程序</li>
+</ol>
+
+<p><strong>INT 14h, AH=00h（初始化串口）的参数：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>寄存器</th>
+      <th>作用</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AH</td>
+      <td>0x00 = 初始化功能</td>
+    </tr>
+    <tr>
+      <td>AL</td>
+      <td>参数（波特率、数据位等）</td>
+    </tr>
+    <tr>
+      <td>DX</td>
+      <td>串口号（0-3）</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>返回值：</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>寄存器</th>
+      <th>内容</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AH</td>
+      <td>串口状态</td>
+    </tr>
+    <tr>
+      <td>AL</td>
+      <td>Modem 状态</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>“Destroys AX” 注释的含义：</strong></p>
+
+<p>BIOS 中断会修改 AX 寄存器的值。调用后，我们不能假设 AX 还保持原来的值。如果需要 AX 的原值，必须在调用前保存。</p>
+
+<hr />
+
+<h3 id="第-5-6-行打印启动信息">第 5-6 行：打印启动信息</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>call puts
+.string "Pintos"
+</code></pre></div></div>
+
+<p><strong>这是什么？</strong></p>
+
+<p>调用 <code class="language-plaintext highlighter-rouge">puts</code> 函数打印字符串 “Pintos”。</p>
+
+<p><strong>特殊的调用约定：</strong></p>
+
+<p>这里使用了一种巧妙的技术——字符串直接跟在 <code class="language-plaintext highlighter-rouge">call</code> 指令后面。<code class="language-plaintext highlighter-rouge">puts</code> 函数会：</p>
+
+<ol>
+  <li>从返回地址处读取字符串</li>
+  <li>打印字符串</li>
+  <li>返回到字符串之后继续执行</li>
+</ol>
+
+<p>我们将在后面的文档中详细解释 <code class="language-plaintext highlighter-rouge">puts</code> 函数。</p>
+
+<p><strong>执行效果：</strong></p>
+
+<p>在 VGA 显示器和串口上都输出：</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Pintos
+</code></pre></div></div>
+
+<p>这让用户知道引导加载程序已经开始运行。</p>
+
+<hr />
+
+<h2 id="串口通信原理图解">串口通信原理图解</h2>
+
+<h3 id="数据发送过程">数据发送过程</h3>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>         CPU                    串口控制器                  串口线
+    ┌──────────┐             ┌──────────────┐           ┌────────┐
+    │ 发送字符 │  写入数据   │              │  串行输出 │        │
+    │  'P'     │ ─────────► │ 发送缓冲区   │ ────────► │ TX ──► │
+    │          │            │              │           │        │
+    └──────────┘             └──────────────┘           └────────┘
+    
+    字符 'P' = 0x50 = 01010000
+    
+    传输波形：
+    ─┐ ┌─┐   ┌─┐   ┌─────┐
+     └─┘ └───┘ └───┘     └─
+      0 0 0 0 1 0 1 0 停止
+      │ └──┬──┘ └─┬─┘
+      │    │     │
+    起始  数据   数据
+</code></pre></div></div>
+
+<h3 id="为什么是-9600-波特率">为什么是 9600 波特率？</h3>
+
+<ul>
+  <li>9600 bps 意味着每秒传输 9600 个比特</li>
+  <li>每个字符需要 10 比特（1 起始 + 8 数据 + 1 停止）</li>
+  <li>所以每秒最多传输 960 个字符</li>
+  <li>对于引导阶段的调试输出来说足够了</li>
+</ul>
+
+<hr />
+
+<h2 id="在模拟器中的应用">在模拟器中的应用</h2>
+
+<h3 id="qemu">QEMU</h3>
+
+<p>Pintos 通常在 QEMU 模拟器中运行。QEMU 可以将串口输出重定向：</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 串口输出到终端</span>
+qemu-system-i386 <span class="nt">-serial</span> stdio ...
+
+<span class="c"># 串口输出到文件</span>
+qemu-system-i386 <span class="nt">-serial</span> file:serial.log ...
+</code></pre></div></div>
+
+<h3 id="bochs">Bochs</h3>
+
+<p>在 Bochs 模拟器中，可以配置：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>com1: enabled=1, mode=file, dev=serial.log
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="常见问题">常见问题</h2>
+
+<h3 id="q1-如果没有串口会怎样">Q1: 如果没有串口会怎样？</h3>
+
+<p>如果物理硬件上没有串口，BIOS 可能会忽略这些操作，或者返回错误状态。但这不会导致引导失败——我们还有 VGA 输出作为后备。</p>
+
+<h3 id="q2-为什么选择-9600-波特率">Q2: 为什么选择 9600 波特率？</h3>
+
+<p>9600 是一个常见的、广泛支持的波特率。更高的波特率（如 115200）可能在某些旧 BIOS 上不支持。</p>
+
+<h3 id="q3-什么是-n-8-1">Q3: 什么是 “N-8-1”？</h3>
+
+<ul>
+  <li><strong>N</strong>：No parity（无奇偶校验）</li>
+  <li><strong>8</strong>：8 个数据位</li>
+  <li><strong>1</strong>：1 个停止位</li>
+</ul>
+
+<p>这是最常见的串口配置。</p>
+
+<h3 id="q4-为什么同时输出到-vga-和串口">Q4: 为什么同时输出到 VGA 和串口？</h3>
+
+<p>冗余输出确保在各种环境下都能看到调试信息：</p>
+<ul>
+  <li>有显示器时看 VGA</li>
+  <li>无显示器时看串口</li>
+  <li>调试时两者都看</li>
+</ul>
+
+<hr />
+
+<h2 id="实践示例">实践示例</h2>
+
+<h3 id="手动计算初始化参数">手动计算初始化参数</h3>
+
+<p>假设你想配置：2400 bps, 奇校验, 7 数据位, 2 停止位</p>
+
+<ol>
+  <li>波特率 2400 → 位 7-5 = 101</li>
+  <li>奇校验 → 位 4-3 = 01</li>
+  <li>2 停止位 → 位 2 = 1</li>
+  <li>7 数据位 → 位 1-0 = 10</li>
+</ol>
+
+<p>结果：10101110 = 0xAE</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mov $0xae, %al    # 2400 bps, Odd-7-2
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="练习思考">练习思考</h2>
+
+<ol>
+  <li>
+    <p>如果要使用 COM2（串口 1）而不是 COM1，应该如何修改代码？</p>
+  </li>
+  <li>
+    <p>计算参数值：19200 bps 是否被 BIOS INT 14h 支持？（提示：查看波特率选项表）</p>
+  </li>
+  <li>
+    <p>为什么在嵌入式系统开发中串口调试仍然很流行？</p>
+  </li>
+</ol>
+
+<hr />
+
+<h2 id="下一部分">下一部分</h2>
+
+<p>串口配置完成后，接下来我们要扫描硬盘，寻找 Pintos 内核分区。请参阅下一篇文章。</p>

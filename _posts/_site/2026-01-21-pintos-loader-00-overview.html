@@ -1,0 +1,204 @@
+<h2 id="概述">概述</h2>
+
+<p>这是一个针对 Pintos 操作系统引导加载程序 <code class="language-plaintext highlighter-rouge">loader.S</code> 的详细分析文档系列，力求用简单易懂的方式解释每一个概念和代码片段。</p>
+
+<hr />
+
+<h2 id="文档列表">文档列表</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>序号</th>
+      <th>主题</th>
+      <th>简介</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>初始化</td>
+      <td>段寄存器和栈的设置</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>串口配置</td>
+      <td>配置串口用于调试输出</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>扫描分区</td>
+      <td>扫描硬盘寻找 Pintos 内核分区</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>加载内核</td>
+      <td>将内核从磁盘读取到内存</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>跳转到内核</td>
+      <td>从 ELF 头读取入口地址并跳转</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>错误处理</td>
+      <td>处理各种启动失败情况</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td>puts 函数</td>
+      <td>巧妙的字符串打印实现</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td>putc 函数</td>
+      <td>字符输出和自修改代码</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td>read_sector 函数</td>
+      <td>使用 BIOS 扩展读取磁盘</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td>数据结构</td>
+      <td>引导扇区末尾的数据定义</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="阅读顺序">阅读顺序</h2>
+
+<p>建议按照文档编号顺序阅读，因为：</p>
+<ol>
+  <li>文档按代码执行顺序组织</li>
+  <li>后面的文档可能引用前面介绍的概念</li>
+  <li>辅助函数的文档放在最后，因为它们被多处调用</li>
+</ol>
+
+<hr />
+
+<h2 id="每个文档的结构">每个文档的结构</h2>
+
+<p>每个文档都包含以下部分：</p>
+
+<ul>
+  <li><strong>概述</strong>：本部分代码的作用</li>
+  <li><strong>原始代码</strong>：完整的汇编代码</li>
+  <li><strong>前置知识</strong>：理解代码所需的背景知识</li>
+  <li><strong>逐行详解</strong>：每一行代码的详细解释</li>
+  <li><strong>图解/流程图</strong>：可视化的执行过程</li>
+  <li><strong>常见问题</strong>：FAQ 解答常见疑惑</li>
+  <li><strong>练习思考</strong>：帮助加深理解的思考题</li>
+</ul>
+
+<hr />
+
+<h2 id="先决知识">先决知识</h2>
+
+<p>阅读这些文档前，最好了解：</p>
+
+<h3 id="基本编程概念">基本编程概念</h3>
+<ul>
+  <li>变量、函数、循环、条件判断</li>
+  <li>十六进制数表示</li>
+</ul>
+
+<h3 id="计算机基础">计算机基础</h3>
+<ul>
+  <li>内存的概念</li>
+  <li>CPU 执行指令的基本原理</li>
+  <li>二进制和十六进制</li>
+</ul>
+
+<h3 id="可选但有帮助">可选但有帮助</h3>
+<ul>
+  <li>任意一种汇编语言的基础</li>
+  <li>C 语言基础</li>
+</ul>
+
+<hr />
+
+<h2 id="术语表">术语表</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>术语</th>
+      <th>解释</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>BIOS</td>
+      <td>基本输入输出系统，提供底层硬件服务</td>
+    </tr>
+    <tr>
+      <td>MBR</td>
+      <td>主引导记录，硬盘第一个扇区</td>
+    </tr>
+    <tr>
+      <td>实模式</td>
+      <td>x86 CPU 启动时的 16 位模式</td>
+    </tr>
+    <tr>
+      <td>保护模式</td>
+      <td>x86 CPU 的 32 位模式</td>
+    </tr>
+    <tr>
+      <td>段寄存器</td>
+      <td>用于内存分段的特殊寄存器</td>
+    </tr>
+    <tr>
+      <td>LBA</td>
+      <td>逻辑块寻址，现代磁盘寻址方式</td>
+    </tr>
+    <tr>
+      <td>ELF</td>
+      <td>可执行文件格式</td>
+    </tr>
+    <tr>
+      <td>中断</td>
+      <td>CPU 响应外部事件或软件请求的机制</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="相关文件">相关文件</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">src/threads/loader.S</code> - 引导加载程序源代码</li>
+  <li><code class="language-plaintext highlighter-rouge">src/threads/loader.h</code> - 相关常量定义</li>
+  <li><code class="language-plaintext highlighter-rouge">src/threads/start.S</code> - 内核入口点（loader 跳转的目标）</li>
+</ul>
+
+<hr />
+
+<h2 id="学习建议">学习建议</h2>
+
+<ol>
+  <li><strong>边读边画</strong>：画出内存布局和执行流程图</li>
+  <li><strong>动手实验</strong>：用调试器单步执行代码</li>
+  <li><strong>修改代码</strong>：尝试做小修改看看效果</li>
+  <li><strong>提出问题</strong>：不懂就问，记下疑惑</li>
+</ol>
+
+<hr />
+
+<h2 id="参考资料">参考资料</h2>
+
+<ul>
+  <li><a href="https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html">Intel x86 手册</a></li>
+  <li><a href="https://wiki.osdev.org/">OSDev Wiki</a></li>
+  <li><a href="https://web.stanford.edu/class/cs140/projects/pintos/pintos.html">Pintos 官方文档</a></li>
+  <li><a href="http://www.ctyme.com/intr/int.htm">BIOS 中断列表</a></li>
+</ul>
+
+<hr />
+
+<p>祝学习愉快！</p>

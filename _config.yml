@@ -21,6 +21,9 @@ tagline: A CS Undergraduate # it will display as the subtitle
 description: >- # used by seo meta and the atom feed
   A CS Undergraduate's personal blog for sharing thoughts and technical knowledge.
 
+# Control how excerpts are generated on cards. Use <!--more--> in posts to split.
+excerpt_separator: "<!--more-->"
+
 # Fill in the protocol & hostname for your site.
 # E.g. 'https://username.github.io', note that it does not end with a '/'.
 url: "https://zxsheather.github.io"

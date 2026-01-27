@@ -1,0 +1,289 @@
+<p>我们知道，递归的过程可以用栈来模拟。但对于一些困难的问题，我们好像很难用栈去写。比如说汉诺塔问题。再比如说:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="nf">f</span><span class="p">(</span><span class="kt">int</span> <span class="n">i</span><span class="p">){</span>
+    <span class="k">return</span> <span class="n">i</span> <span class="o">&lt;=</span> <span class="mi">1</span> <span class="o">?</span> <span class="mi">1</span> <span class="o">:</span> <span class="n">f</span><span class="p">(</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">+</span> <span class="n">g</span><span class="p">(</span><span class="n">i</span><span class="o">-</span><span class="mi">2</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="kt">int</span> <span class="nf">g</span><span class="p">(</span><span class="kt">int</span> <span class="n">i</span><span class="p">){</span>
+    <span class="k">return</span> <span class="n">i</span> <span class="o">&lt;=</span> <span class="mi">1</span> <span class="o">?</span> <span class="mi">1</span> <span class="o">:</span> <span class="n">f</span><span class="p">(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span> <span class="o">+</span> <span class="n">g</span><span class="p">(</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>在这些例子中，我们该怎么知道什么时候该入队，什么时候该出队呢？比如在第二个例子里，我们调用了<code class="language-plaintext highlighter-rouge">f(i)</code>,我们并不能把<code class="language-plaintext highlighter-rouge">f(i)</code>立刻出队。即使<code class="language-plaintext highlighter-rouge">f(i-1)</code>计算完成，我们还需要等到<code class="language-plaintext highlighter-rouge">g(i-2)</code>计算完成后才能出队。<br />
+此时我们需要持有一种对计算机、程序的一种相当本质的看法：<strong>状态机</strong>。程序运行本质上都是一些状态的转换。我们在运行的过程中保存当前的状态<code class="language-plaintext highlighter-rouge">pc</code>，然后根据当前不同的状态执行不同的任务。<br />
+比如对于第二个例子，我们可以定义此时<code class="language-plaintext highlighter-rouge">f</code>或<code class="language-plaintext highlighter-rouge">g</code>所处于的状态为以下四个状态：</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">enum</span> <span class="n">State</span> <span class="p">{</span>
+    <span class="n">CALL</span><span class="p">,</span>        <span class="c1">// 初始调用 </span>
+    <span class="n">CALC_FIRST</span><span class="p">,</span>  <span class="c1">// 计算第一个子表达式</span>
+    <span class="n">CALC_SECOND</span><span class="p">,</span> <span class="c1">// 计算第二个子表达式</span>
+    <span class="n">RETURN</span>       <span class="c1">// 返回结果</span>
+<span class="p">};</span>
+</code></pre></div></div>
+<p>我们在栈帧中保存以下几个值：</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="nc">StackFrame</span> <span class="p">{</span>
+    <span class="n">FuncType</span> <span class="n">func</span><span class="p">;</span> <span class="c1">// 当前执行的函数类型</span>
+    <span class="kt">int</span> <span class="n">i</span><span class="p">;</span>         <span class="c1">// 输入参数</span>
+    <span class="n">State</span> <span class="n">state</span><span class="p">;</span>   <span class="c1">// 当前执行状态</span>
+    <span class="kt">int</span> <span class="n">result</span><span class="p">;</span>    <span class="c1">// 中间结果存储</span>
+<span class="p">};</span>
+</code></pre></div></div>
+<p>取出栈顶的元素<code class="language-plaintext highlighter-rouge">top</code>，根据不同的状态，执行以下不同的任务：</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">switch</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">state</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">case</span> <span class="n">CALL</span><span class="p">:</span>
+        <span class="c1">// 处理基本情况</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+            <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+            <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">RETURN</span><span class="p">;</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="c1">// 设置为计算第一个子表达式的状态</span>
+            <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">CALC_FIRST</span><span class="p">;</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">func</span> <span class="o">==</span> <span class="n">FUNC_F</span><span class="p">)</span> <span class="p">{</span>
+                <span class="c1">// f 函数需要计算 f(i-1)</span>
+                <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">FUNC_F</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+            <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+                <span class="c1">// g 函数需要计算 f(i+1)</span>
+                <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">FUNC_F</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+        <span class="k">break</span><span class="p">;</span>
+        
+    <span class="k">case</span> <span class="n">CALC_FIRST</span><span class="p">:</span>
+        <span class="c1">// 保存第一个子表达式结果</span>
+        <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">=</span> <span class="n">finalResult</span><span class="p">;</span>
+        <span class="c1">// 设置为计算第二个子表达式的状态</span>
+        <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">CALC_SECOND</span><span class="p">;</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">func</span> <span class="o">==</span> <span class="n">FUNC_F</span><span class="p">)</span> <span class="p">{</span>
+            <span class="c1">// f 函数需要计算 g(i-2)</span>
+            <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">FUNC_G</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">-</span> <span class="mi">2</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+        <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+            <span class="c1">// g 函数需要计算 g(i-1)</span>
+            <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">FUNC_G</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+        <span class="p">}</span>
+        <span class="k">break</span><span class="p">;</span>
+        
+    <span class="k">case</span> <span class="n">CALC_SECOND</span><span class="p">:</span>
+        <span class="c1">// 计算最终结果 = 第一个子表达式结果 + 第二个子表达式结果</span>
+        <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">+=</span> <span class="n">finalResult</span><span class="p">;</span>
+        <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">RETURN</span><span class="p">;</span>
+        <span class="k">break</span><span class="p">;</span>
+        
+    <span class="k">case</span> <span class="n">RETURN</span><span class="p">:</span>
+        <span class="c1">// 保存当前函数的计算结果</span>
+        <span class="n">finalResult</span> <span class="o">=</span> <span class="n">top</span><span class="p">.</span><span class="n">result</span><span class="p">;</span>
+        <span class="c1">// 完成计算，弹出栈帧</span>
+        <span class="n">callStack</span><span class="p">.</span><span class="n">pop</span><span class="p">();</span>
+        <span class="k">break</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>在其中我们用<code class="language-plaintext highlighter-rouge">finalResult</code>变量来传递上一个弹出的栈帧所返回的值，将该值传递给调用它的函数.通过保存状态，我们就知道何时该函数该做什么事情。
+以下是完整的代码：</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span> <span class="cpf">&lt;iostream&gt;</span><span class="cp">
+#include</span> <span class="cpf">&lt;stack&gt;</span><span class="cp">
+</span>
+<span class="c1">// 定义函数类型</span>
+<span class="k">enum</span> <span class="n">FuncType</span> <span class="p">{</span>
+    <span class="n">FUNC_F</span><span class="p">,</span> <span class="c1">// f函数</span>
+    <span class="n">FUNC_G</span>  <span class="c1">// g函数</span>
+<span class="p">};</span>
+
+<span class="c1">// 定义计算状态</span>
+<span class="k">enum</span> <span class="n">State</span> <span class="p">{</span>
+    <span class="n">CALL</span><span class="p">,</span>        <span class="c1">// 初始调用</span>
+    <span class="n">CALC_FIRST</span><span class="p">,</span>  <span class="c1">// 计算第一个子表达式</span>
+    <span class="n">CALC_SECOND</span><span class="p">,</span> <span class="c1">// 计算第二个子表达式</span>
+    <span class="n">RETURN</span>       <span class="c1">// 返回结果</span>
+<span class="p">};</span>
+
+<span class="c1">// 栈帧结构，存储每个调用的状态</span>
+<span class="k">struct</span> <span class="nc">StackFrame</span> <span class="p">{</span>
+    <span class="n">FuncType</span> <span class="n">func</span><span class="p">;</span> <span class="c1">// 当前执行的函数类型</span>
+    <span class="kt">int</span> <span class="n">i</span><span class="p">;</span>         <span class="c1">// 输入参数</span>
+    <span class="n">State</span> <span class="n">state</span><span class="p">;</span>   <span class="c1">// 当前执行状态</span>
+    <span class="kt">int</span> <span class="n">result</span><span class="p">;</span>    <span class="c1">// 中间结果存储</span>
+<span class="p">};</span>
+
+<span class="c1">// 统一的非递归计算函数</span>
+<span class="kt">int</span> <span class="nf">calculate</span><span class="p">(</span><span class="n">FuncType</span> <span class="n">initial_func</span><span class="p">,</span> <span class="kt">int</span> <span class="n">initial_i</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">std</span><span class="o">::</span><span class="n">stack</span><span class="o">&lt;</span><span class="n">StackFrame</span><span class="o">&gt;</span> <span class="n">callStack</span><span class="p">;</span>
+    
+    <span class="c1">// 将初始调用推入栈中</span>
+    <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">initial_func</span><span class="p">,</span> <span class="n">initial_i</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+    
+    <span class="kt">int</span> <span class="n">finalResult</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    
+    <span class="k">while</span> <span class="p">(</span><span class="o">!</span><span class="n">callStack</span><span class="p">.</span><span class="n">empty</span><span class="p">())</span> <span class="p">{</span>
+        <span class="c1">// 引用栈顶元素以便修改</span>
+        <span class="n">StackFrame</span><span class="o">&amp;</span> <span class="n">top</span> <span class="o">=</span> <span class="n">callStack</span><span class="p">.</span><span class="n">top</span><span class="p">();</span>
+        
+        <span class="k">switch</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">state</span><span class="p">)</span> <span class="p">{</span>
+            <span class="k">case</span> <span class="n">CALL</span><span class="p">:</span>
+                <span class="c1">// 处理基本情况</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+                    <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+                    <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">RETURN</span><span class="p">;</span>
+                <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+                    <span class="c1">// 设置为计算第一个子表达式的状态</span>
+                    <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">CALC_FIRST</span><span class="p">;</span>
+                    <span class="k">if</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">func</span> <span class="o">==</span> <span class="n">FUNC_F</span><span class="p">)</span> <span class="p">{</span>
+                        <span class="c1">// f 函数需要计算 f(i-1)</span>
+                        <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">FUNC_F</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+                    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+                        <span class="c1">// g 函数需要计算 f(i+1)</span>
+                        <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">FUNC_F</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+                    <span class="p">}</span>
+                <span class="p">}</span>
+                <span class="k">break</span><span class="p">;</span>
+                
+            <span class="k">case</span> <span class="n">CALC_FIRST</span><span class="p">:</span>
+                <span class="c1">// 保存第一个子表达式结果</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">=</span> <span class="n">finalResult</span><span class="p">;</span>
+                <span class="c1">// 设置为计算第二个子表达式的状态</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">CALC_SECOND</span><span class="p">;</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">func</span> <span class="o">==</span> <span class="n">FUNC_F</span><span class="p">)</span> <span class="p">{</span>
+                    <span class="c1">// f 函数需要计算 g(i-2)</span>
+                    <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">FUNC_G</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">-</span> <span class="mi">2</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+                <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+                    <span class="c1">// g 函数需要计算 g(i-1)</span>
+                    <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">FUNC_G</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">CALL</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+                <span class="p">}</span>
+                <span class="k">break</span><span class="p">;</span>
+                
+            <span class="k">case</span> <span class="n">CALC_SECOND</span><span class="p">:</span>
+                <span class="c1">// 计算最终结果 = 第一个子表达式结果 + 第二个子表达式结果</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">+=</span> <span class="n">finalResult</span><span class="p">;</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">RETURN</span><span class="p">;</span>
+                <span class="k">break</span><span class="p">;</span>
+                
+            <span class="k">case</span> <span class="n">RETURN</span><span class="p">:</span>
+                <span class="c1">// 保存当前函数的计算结果</span>
+                <span class="n">finalResult</span> <span class="o">=</span> <span class="n">top</span><span class="p">.</span><span class="n">result</span><span class="p">;</span>
+                <span class="c1">// 完成计算，弹出栈帧</span>
+                <span class="n">callStack</span><span class="p">.</span><span class="n">pop</span><span class="p">();</span>
+                <span class="k">break</span><span class="p">;</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+    
+    <span class="k">return</span> <span class="n">finalResult</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// f 函数的非递归实现</span>
+<span class="kt">int</span> <span class="nf">f_non_recursive</span><span class="p">(</span><span class="kt">int</span> <span class="n">i</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="n">calculate</span><span class="p">(</span><span class="n">FUNC_F</span><span class="p">,</span> <span class="n">i</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">// g 函数的非递归实现</span>
+<span class="kt">int</span> <span class="nf">g_non_recursive</span><span class="p">(</span><span class="kt">int</span> <span class="n">i</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="n">calculate</span><span class="p">(</span><span class="n">FUNC_G</span><span class="p">,</span> <span class="n">i</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">int</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="n">n</span> <span class="o">=</span> <span class="mi">5</span><span class="p">;</span>
+    <span class="n">std</span><span class="o">::</span><span class="n">cout</span> <span class="o">&lt;&lt;</span> <span class="s">"f("</span> <span class="o">&lt;&lt;</span> <span class="n">n</span> <span class="o">&lt;&lt;</span> <span class="s">") = "</span> <span class="o">&lt;&lt;</span> <span class="n">f_non_recursive</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">&lt;&lt;</span> <span class="n">std</span><span class="o">::</span><span class="n">endl</span><span class="p">;</span>
+    <span class="n">std</span><span class="o">::</span><span class="n">cout</span> <span class="o">&lt;&lt;</span> <span class="s">"g("</span> <span class="o">&lt;&lt;</span> <span class="n">n</span> <span class="o">&lt;&lt;</span> <span class="s">") = "</span> <span class="o">&lt;&lt;</span> <span class="n">g_non_recursive</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">&lt;&lt;</span> <span class="n">std</span><span class="o">::</span><span class="n">endl</span><span class="p">;</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>汉诺塔问题其实也类似。<br />
+这是汉诺塔问题的递归写法:</p>
+<div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include</span><span class="cpf">&lt;iostream&gt;</span><span class="cp">
+#include</span><span class="cpf">&lt;stack&gt;</span><span class="cp">
+</span><span class="k">using</span> <span class="k">namespace</span> <span class="n">std</span><span class="p">;</span>
+
+<span class="c1">// 定义操作状态枚举，用于模拟递归过程中的不同阶段</span>
+<span class="k">enum</span> <span class="n">Operation</span><span class="p">{</span>
+    <span class="n">MOVE_N_1_TO_AUX</span><span class="p">,</span>  <span class="c1">// 将n-1个盘子从源柱移动到辅助柱</span>
+    <span class="n">MOVE_N_TO_TAR</span><span class="p">,</span>    <span class="c1">// 将第n个盘子（最大的）从源柱移动到目标柱</span>
+    <span class="n">MOVE_AUX_TO_TAR</span><span class="p">,</span>  <span class="c1">// 将n-1个盘子从辅助柱移动到目标柱</span>
+    <span class="n">RETURN</span>           <span class="c1">// 当前操作完成，返回结果</span>
+<span class="p">};</span>
+
+<span class="c1">// 定义栈帧结构体，存储每次"函数调用"的状态和参数</span>
+<span class="k">struct</span> <span class="nc">StackFrame</span><span class="p">{</span>
+    <span class="kt">int</span> <span class="n">n</span><span class="p">;</span>           <span class="c1">// 当前要移动的盘子数量</span>
+    <span class="kt">char</span> <span class="n">source</span><span class="p">;</span>     <span class="c1">// 源柱子</span>
+    <span class="kt">char</span> <span class="n">auxiliary</span><span class="p">;</span>  <span class="c1">// 辅助柱子</span>
+    <span class="kt">char</span> <span class="n">target</span><span class="p">;</span>     <span class="c1">// 目标柱子</span>
+    <span class="n">Operation</span> <span class="n">state</span><span class="p">;</span> <span class="c1">// 当前执行状态</span>
+    <span class="kt">int</span> <span class="n">result</span><span class="p">;</span>      <span class="c1">// 存储移动次数结果</span>
+<span class="p">};</span>
+
+<span class="c1">// 非递归实现汉诺塔问题，返回值为移动次数</span>
+<span class="kt">int</span> <span class="nf">Hanoi</span><span class="p">(</span><span class="kt">int</span> <span class="n">n</span><span class="p">,</span> <span class="kt">char</span> <span class="n">source</span><span class="p">,</span> <span class="kt">char</span> <span class="n">auxiliary</span><span class="p">,</span> <span class="kt">char</span> <span class="n">target</span><span class="p">){</span>
+    <span class="c1">// 创建调用栈，用于模拟递归过程</span>
+    <span class="n">stack</span><span class="o">&lt;</span><span class="n">StackFrame</span><span class="o">&gt;</span> <span class="n">callStack</span><span class="p">;</span>
+    
+    <span class="c1">// 将初始调用推入栈中，初始状态为移动n-1个盘子到辅助柱</span>
+    <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">n</span><span class="p">,</span> <span class="n">source</span><span class="p">,</span> <span class="n">auxiliary</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">MOVE_N_1_TO_AUX</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+    
+    <span class="c1">// 存储最终结果（总移动次数）</span>
+    <span class="kt">int</span> <span class="n">finalResult</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+    
+    <span class="c1">// 当栈不为空时，继续处理</span>
+    <span class="k">while</span><span class="p">(</span><span class="o">!</span><span class="n">callStack</span><span class="p">.</span><span class="n">empty</span><span class="p">()){</span>
+        <span class="c1">// 引用栈顶元素以便修改</span>
+        <span class="n">StackFrame</span> <span class="o">&amp;</span><span class="n">top</span> <span class="o">=</span> <span class="n">callStack</span><span class="p">.</span><span class="n">top</span><span class="p">();</span>
+        
+        <span class="c1">// 根据当前状态执行相应操作</span>
+        <span class="k">switch</span> <span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">state</span><span class="p">){</span>
+            <span class="k">case</span> <span class="n">MOVE_N_1_TO_AUX</span><span class="p">:{</span>
+                <span class="c1">// 基本情况：只有一个盘子时，直接移动到目标柱</span>
+                <span class="k">if</span><span class="p">(</span><span class="n">top</span><span class="p">.</span><span class="n">n</span> <span class="o">==</span> <span class="mi">1</span><span class="p">){</span>
+                    <span class="n">cout</span> <span class="o">&lt;&lt;</span> <span class="n">top</span><span class="p">.</span><span class="n">source</span> <span class="o">&lt;&lt;</span> <span class="s">"-&gt;"</span> <span class="o">&lt;&lt;</span> <span class="n">top</span><span class="p">.</span><span class="n">target</span> <span class="o">&lt;&lt;</span> <span class="n">endl</span><span class="p">;</span>
+                    <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>  <span class="c1">// 记录移动一次</span>
+                    <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">RETURN</span><span class="p">;</span>  <span class="c1">// 设置状态为返回</span>
+                <span class="p">}</span><span class="k">else</span><span class="p">{</span>
+                    <span class="c1">// 将n-1个盘子从源柱移到辅助柱（先记录下一步操作）</span>
+                    <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">MOVE_N_TO_TAR</span><span class="p">;</span>  <span class="c1">// 更新当前栈帧的下一状态</span>
+                    
+                    <span class="c1">// 创建新的栈帧处理子问题：将n-1个盘子从source移到auxiliary，以target为辅助</span>
+                    <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">top</span><span class="p">.</span><span class="n">n</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">source</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">target</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">auxiliary</span><span class="p">,</span> <span class="n">MOVE_N_1_TO_AUX</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+                <span class="p">}</span>
+                <span class="k">break</span><span class="p">;</span>
+            <span class="p">}</span>
+            <span class="k">case</span> <span class="n">MOVE_N_TO_TAR</span><span class="p">:{</span>
+                <span class="c1">// 将第一子问题的结果加到当前结果中</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">+=</span> <span class="n">finalResult</span><span class="p">;</span>
+                
+                <span class="c1">// 更新状态为移动辅助柱上的盘子到目标柱</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">MOVE_AUX_TO_TAR</span><span class="p">;</span>
+                
+                <span class="c1">// 移动最大的盘子从源柱到目标柱</span>
+                <span class="n">cout</span> <span class="o">&lt;&lt;</span> <span class="n">top</span><span class="p">.</span><span class="n">source</span> <span class="o">&lt;&lt;</span> <span class="s">"-&gt;"</span> <span class="o">&lt;&lt;</span> <span class="n">top</span><span class="p">.</span><span class="n">target</span> <span class="o">&lt;&lt;</span> <span class="n">endl</span><span class="p">;</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">result</span><span class="o">++</span><span class="p">;</span>  <span class="c1">// 记录这次移动</span>
+                
+                <span class="c1">// 创建新的栈帧处理第二子问题：将n-1个盘子从auxiliary移到source，以target为辅助</span>
+                <span class="n">callStack</span><span class="p">.</span><span class="n">push</span><span class="p">({</span><span class="n">top</span><span class="p">.</span><span class="n">n</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">auxiliary</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">source</span><span class="p">,</span> <span class="n">top</span><span class="p">.</span><span class="n">target</span><span class="p">,</span> <span class="n">MOVE_N_1_TO_AUX</span><span class="p">,</span> <span class="mi">0</span><span class="p">});</span>
+                <span class="k">break</span><span class="p">;</span>
+            <span class="p">}</span>
+            <span class="k">case</span> <span class="n">MOVE_AUX_TO_TAR</span><span class="p">:{</span>
+                <span class="c1">// 将第二子问题的结果加到当前结果中</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">result</span> <span class="o">+=</span> <span class="n">finalResult</span><span class="p">;</span>
+                
+                <span class="c1">// 所有操作完成，设置状态为返回</span>
+                <span class="n">top</span><span class="p">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">RETURN</span><span class="p">;</span>
+                <span class="k">break</span><span class="p">;</span>
+            <span class="p">}</span>
+            <span class="k">case</span> <span class="n">RETURN</span><span class="p">:{</span>
+                <span class="c1">// 保存当前栈帧的结果</span>
+                <span class="n">finalResult</span> <span class="o">=</span> <span class="n">top</span><span class="p">.</span><span class="n">result</span><span class="p">;</span>
+                
+                <span class="c1">// 弹出已完成的栈帧</span>
+                <span class="n">callStack</span><span class="p">.</span><span class="n">pop</span><span class="p">();</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+    
+    <span class="c1">// 返回汉诺塔问题的总移动次数</span>
+    <span class="k">return</span> <span class="n">finalResult</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kt">int</span> <span class="nf">main</span><span class="p">(){</span>
+    <span class="c1">// 设置盘子数量</span>
+    <span class="kt">int</span> <span class="n">n</span> <span class="o">=</span> <span class="mi">3</span><span class="p">;</span>
+    
+    <span class="c1">// 调用Hanoi函数，设定三根柱子为A、B、C</span>
+    <span class="kt">int</span> <span class="n">result</span> <span class="o">=</span> <span class="n">Hanoi</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="sc">'A'</span><span class="p">,</span> <span class="sc">'B'</span><span class="p">,</span> <span class="sc">'C'</span><span class="p">);</span>
+    
+    <span class="c1">// 输出移动总次数</span>
+    <span class="n">cout</span> <span class="o">&lt;&lt;</span> <span class="s">"count:"</span> <span class="o">&lt;&lt;</span> <span class="n">result</span><span class="p">;</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+

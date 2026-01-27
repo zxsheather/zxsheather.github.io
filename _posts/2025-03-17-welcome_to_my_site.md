@@ -5,6 +5,7 @@ date: 2025-03-17
 categories: [随笔]
 tags: [个人介绍]
 pin: true
+description: "Writing is a solitary art."
 ---
 
 > Writing is a solitary art. —— Susan Sontag
